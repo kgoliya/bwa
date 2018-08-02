@@ -42,14 +42,18 @@ int64_t bin_sort_time = 0;
 int64_t l_pac_global = 0;
 
 mt_entry * mt;
-dpt_entry ** dpt;
-umt_entry ** umt;
-
-int dpt_size = 1000;
-int dpt_length = 0;
-int umt_size = 1000;
-int umt_length = 0;
 int64_t mt_length = 0;
+
+sort_ot_entry ** sort_ot;
+int sort_ot_size = 1000;
+int sort_ot_length = 0;
+
+md_ot_entry ** md_ot;
+int md_ot_size = 1000;
+int md_ot_length = 0;
+
+
+
 char * temp_unsorted_file_name;
 char * sorted_file_name;
 FILE * temp_unsorted_file;
@@ -57,203 +61,140 @@ FILE * sorted_file;
 
 int sort_verbose = 0;
 
-
-void print_seqs(int64_t * seqs){
-    int i = 0;
-    for(i=0;i<24;i++){
-        printf("Seq[%d] : %ld\n",i,seqs[i]);
-    }
-}
-
-
-
-/*void sorting_init(int64_t l_pac){            // Assuming this l_pac is size of forward ref strand
-
-    fprintf(stderr,"Initializing sorter\n");
-    mt = (mt_entry * ) malloc((l_pac) * sizeof(mt_entry));
-    dpt = (dpt_entry ** ) malloc(dpt_size * sizeof(dpt_entry *));
-    umt = (umt_entry ** ) malloc(umt_size * sizeof(umt_entry *));
-    memset(mt,0,((l_pac) + 1) * sizeof(mt_entry));
-    memset(dpt,0,(dpt_size * sizeof(dpt_entry *)));
-    dpt_length = 0;
-    mt_length = l_pac;
-    //TODO: Define temp_unsorted_file;
-    temp_unsorted_file_name = "/home/centos/extra_ssd/tmp_unsorted.sam";
-    temp_unsorted_file = fopen(temp_unsorted_file_name,"w");
-}*/
-
 void sorting_init_1(int64_t l_pac){            // Assuming this l_pac is size of forward ref strand
 
-    fprintf(stderr,"Initializing sorter\n");
     mt = (mt_entry * ) malloc((l_pac) * sizeof(mt_entry));
-    dpt = (dpt_entry ** ) malloc(dpt_size * sizeof(dpt_entry *));
-    umt = (umt_entry ** ) malloc(umt_size * sizeof(umt_entry *));
+    sort_ot = (sort_ot_entry ** ) malloc(sort_ot_size * sizeof(sort_ot_entry *));
+    md_ot = (md_ot_entry ** ) malloc(md_ot_size * sizeof(md_ot_entry *));
     memset(mt,0,((l_pac) + 1) * sizeof(mt_entry));
-    memset(dpt,0,(dpt_size * sizeof(dpt_entry *)));
-    dpt_length = 0;
-    umt_length = 0;
     mt_length = l_pac;
+    
+    memset(sort_ot,0,(sort_ot_size * sizeof(sort_ot_entry *)));
+    sort_ot_length = 0;
+
+    memset(md_ot,0,(md_ot_size * sizeof(md_ot_entry *)));
+    md_ot_length = 0;
 }
 
 void sorting_close(){
     fprintf(stderr,"Closing sorter\n");
     free(mt);
     int i = 0;
-    for(i = dpt_length-1;i>=0;i--){
-        free(dpt[i]);
+    for(i = md_ot_length-1;i>=0;i--){
+        free(md_ot[i]);
     }
-    for(i = umt_length-1;i>=0;i--){
-        free(umt[i]);
+    for(i = sort_ot_length-1;i>=0;i--){
+        free(sort_ot[i]);
     }
-    free(dpt);
-    free(umt);
+    free(md_ot);
+    free(sort_ot);
 }
 
-void add_dpt_entry_mt(int64_t ref_pos,half_mt_entry * in_mt_entry){
-    if(dpt_length != 0 && dpt_length % dpt_size == 0){
-        dpt = realloc(dpt,(dpt_length + dpt_size) * sizeof(dpt_entry *));
-    }
-    dpt[dpt_length] = (dpt_entry *) malloc(sizeof(dpt_entry));
-    dpt[dpt_length]->ref_pos = ref_pos;
-    memcpy(&dpt[dpt_length]->file_ptr,&in_mt_entry->file_ptr,5);
-    dpt[dpt_length]->sam_size = in_mt_entry->sam_size;
-    dpt_length++;
-}
-
-/*void add_dpt_entry_seq(int64_t file_ptr, bseq1_t *seq){
-    int fp = file_ptr;
-    if(dpt_length != 0 && dpt_length % dpt_size == 0){
-        dpt = realloc(dpt,(dpt_length + dpt_size) * sizeof(dpt_entry *));
-    }
-    dpt[dpt_length] = (dpt_entry *) malloc(sizeof(dpt_entry));
-    dpt[dpt_length]->ref_pos = seq->abs_pos;
-    memcpy(&dpt[dpt_length]->file_ptr,&fp,5);
-    dpt[dpt_length]->sam_size = strlen(seq->sam);
-    dpt_length++;
-}*/
-
-
-void add_dpt_entry_seq_1(int64_t file_ptr, bseq1s_t *seq, int sam_length){
-    int fp = file_ptr;
-    if(dpt_length != 0 && dpt_length % dpt_size == 0){
-        dpt = realloc(dpt,(dpt_length + dpt_size) * sizeof(dpt_entry *));
-    }
-    dpt[dpt_length] = (dpt_entry *) malloc(sizeof(dpt_entry));
-    dpt[dpt_length]->ref_pos = seq->abs_pos;
-    memcpy(&dpt[dpt_length]->file_ptr,&fp,5);
-    dpt[dpt_length]->sam_size = sam_length;
-    dpt_length++;
-}
-
-
-/*void add_mt_entry(bseq1_t *seq, half_mt_entry * in_en){
-    if(in_en->avg_qual == 0){
-        int64_t fp = (int64_t)ftell(temp_unsorted_file);
-        memcpy(&(in_en->file_ptr),&fp,5);
-        in_en->avg_qual = seq->avg_qual;
-        in_en->sam_size = strlen(seq->sam);
-    } 
-    else{
-        int64_t fp = (int64_t)ftell(temp_unsorted_file);
-        if(in_en->avg_qual < seq->avg_qual) {
-            add_dpt_entry_mt(seq->abs_pos,in_en);
-            memcpy(&(in_en->file_ptr),&fp,5);
-            in_en->avg_qual = seq->avg_qual;
-            in_en->sam_size = strlen(seq->sam);
-        }
-        else {
-            add_dpt_entry_seq(fp,seq);
-        }
-    }
-    return;
-}*/
-
-void add_mt_entry_1(bseq1s_t *seq, half_mt_entry * in_en, int64_t file_ptr, int sam_length){
-    if(in_en->avg_qual == 0){
-        int64_t fp = file_ptr;
-        memcpy(&(in_en->file_ptr),&fp,5);
-        in_en->avg_qual = seq->avg_qual;
-        in_en->sam_size = (int16_t)sam_length;
-    } 
-    else{
-        int64_t fp = file_ptr;
-        if(in_en->avg_qual < seq->avg_qual) {
-            add_dpt_entry_mt(seq->abs_pos,in_en);
-            memcpy(&(in_en->file_ptr),&fp,5);
-            in_en->avg_qual = seq->avg_qual;
-            in_en->sam_size = (int16_t)sam_length;
-        }
-        else {
-            add_dpt_entry_seq_1(fp,seq, sam_length);
-        }
-    }
-    return;
-}
-
-/*void add_umt_entry(bseq1_t *seq){
-    int64_t fp = (int64_t)ftell(temp_unsorted_file);
-    if(umt_length != 0 && umt_length % dpt_size == 0){
-        umt = realloc(umt,(umt_length + umt_size) * sizeof(umt_entry *));
-    }
-    umt[umt_length] = (umt_entry *) malloc(sizeof(umt_entry));
-    memcpy(&umt[umt_length]->file_ptr,&fp,5);
-    umt[umt_length]->sam_size = strlen(seq->sam);
-    umt_length++;
-}*/
-
-void add_umt_entry_1(bseq1s_t *seq, int64_t file_ptr, int sam_length){
+void add_sort_ot_entry(bseq1s_t * seq,int64_t file_ptr,int sam_length){
     int64_t fp = file_ptr;
-    if(umt_length != 0 && umt_length % dpt_size == 0){
-        umt = realloc(umt,(umt_length + umt_size) * sizeof(umt_entry *));
+    if(sort_ot_length != 0 && sort_ot_length % sort_ot_size == 0){
+        sort_ot = realloc(sort_ot,(sort_ot_length + sort_ot_size) * sizeof(sort_ot_entry *));
     }
-    umt[umt_length] = (umt_entry *) malloc(sizeof(umt_entry));
-    memcpy(&umt[umt_length]->file_ptr,&fp,5);
-    umt[umt_length]->sam_size = sam_length;
-    umt_length++;
+    
+    sort_ot[sort_ot_length] = (sort_ot_entry * ) malloc(sizeof(sort_ot_entry));
+    sort_ot[sort_ot_length]->ref_pos = seq->abs_pos;
+    memcpy(&sort_ot[sort_ot_length]->si.file_ptr,&fp,5);
+    sort_ot[sort_ot_length]->si.sam_size = sam_length;
+    sort_ot[sort_ot_length]->si.correction = seq->correction;
+    sort_ot[sort_ot_length]->is_rev = seq->is_rev;
+    sort_ot[sort_ot_length]->si.avg_qual = seq->avg_qual;
+    sort_ot_length++;
+}
+
+void add_md_ot_entry(bseq1s_t * seq, half_mt_entry * md_en){
+
+    // If this returns 0, then the current seq under observation is a duplicate and should be placed.
+
+    /*if(md_ot_length != 0 && md_ot_length % md_ot_size == 0){
+        md_ot = realloc(md_ot,(md_ot_length + md_ot_size) * sizeof(md_ot_entry *));
+    }*/
+    
+    if(md_en->mdi.avg_qual < seq->avg_qual){
+        // Previous entry was duplicate
+        md_en->mdi.avg_qual = seq->avg_qual;
+        md_en->mdi.correction = seq->correction;
+    }
+
+    /*md_ot[md_ot_length] = (md_ot_entry * ) malloc(sizeof(md_ot_entry));
+    md_ot[md_ot_length]->ref_pos = seq->abs_pos - seq->correction;
+    md_ot[md_ot_length]->mdi.avg_qual = seq->avg_qual;
+    md_ot[md_ot_length]->mdi.correction = seq->correction;
+    md_ot_length++;*/
 }
 
 
-/*void process_sam_record(bseq1_t *seq){
-    if(seq == NULL){
-        return;
+void add_mt_entry_1(bseq1s_t *seq, int64_t file_ptr, int sam_length){
+
+
+    half_mt_entry * sort_en;
+    half_mt_entry * md_en;
+    int64_t fp;
+    
+    if(seq->is_rev){
+        sort_en = &mt[seq->abs_pos].re;
+        md_en = &mt[seq->abs_pos - seq->correction].re;
     }
-    int i = 0;
-    if(seq->abs_pos >= mt_length){
-        add_umt_entry(seq); 
+    else {
+        sort_en = &mt[seq->abs_pos].fe;
+        md_en = &mt[seq->abs_pos - seq->correction].fe;
+    }
+
+    if(sort_en->si.sam_size == 0){
+        //Sort entry was free
+        fp = file_ptr;
+        memcpy(&(sort_en->si.file_ptr),&fp,5);
+        sort_en->si.sam_size = (int16_t)sam_length;
+        sort_en->si.correction = seq->correction;
+        sort_en->si.avg_qual = seq->avg_qual;
     }
     else{
-        if(seq->is_rev){
-            add_mt_entry(seq,&(mt[seq->abs_pos].re));
-        }
-        else{
-            add_mt_entry(seq,&(mt[seq->abs_pos].fe));
-        }
+        // Add entry to Sort Overflow Table
+        add_sort_ot_entry(seq,file_ptr,sam_length);
     }
-    err_fputs(seq->sam, temp_unsorted_file);
-}*/
+
+    if(md_en->mdi.avg_qual == 0){
+        // MD entry was free
+        md_en->mdi.avg_qual = seq->avg_qual;
+        md_en->mdi.correction = seq->correction;
+    }
+    else{
+        // Add entry to MarkDuplicate Overflow Table
+        // TODO: Add checking mate information for pair ended reads
+
+        add_md_ot_entry(seq, md_en);
+    }
+    return;
+}
+
 
 void process_sam_record_1(bseq1s_t *seq, int64_t file_ptr, int sam_length){
     if(seq == NULL){
         return;
     }
-    int i = 0;
     if(seq->abs_pos >= mt_length){
-        add_umt_entry_1(seq,file_ptr,sam_length); 
+        // TODO: Manage unmapped entries
+        // For now remove them
+        return;
     }
     else{
         if(seq->is_rev){
-            add_mt_entry_1(seq,&(mt[seq->abs_pos].re), file_ptr, sam_length);
+            add_mt_entry_1(seq, file_ptr, sam_length);
         }
         else{
-            add_mt_entry_1(seq,&(mt[seq->abs_pos].fe), file_ptr, sam_length);
+            add_mt_entry_1(seq, file_ptr, sam_length);
         }
     }
 }
 
-int comparator(const void **p, const void **q) 
+int sort_comparator(const void **p, const void **q) 
 {
-    dpt_entry* l = *((dpt_entry **)p);
-    dpt_entry* r = *((dpt_entry **)q); 
+    sort_ot_entry* l = *((sort_ot_entry **)p);
+    sort_ot_entry* r = *((sort_ot_entry **)q); 
     
     if(l->ref_pos < r->ref_pos){
         return -1;
@@ -263,95 +204,69 @@ int comparator(const void **p, const void **q)
     }
 }
 
-void print_mt_entry(half_mt_entry * in,FILE * fin,FILE * fout){
-    if(in->avg_qual != 0){
-        //TODO: Read from temp_file
-        int64_t fp = 0;
-        memcpy(&fp,&in->file_ptr,5);
-        fseek(fin,fp,SEEK_SET);
-        char * in_sam = malloc(in->sam_size + 1);
-        memset(in_sam,0,in->sam_size+1);
-        fread(in_sam,sizeof(char),in->sam_size,fin);
-        in_sam[in->sam_size] = '\0';
-        if(sort_verbose >= 5){
-            fprintf(fout,"File ptr : %ld, sam_size : %d\n",fp,in->sam_size);
-        }
-        err_fputs(in_sam, fout);
-        free(in_sam);
-    }
-} 
 
-void print_dpt_entry(dpt_entry * in,FILE * fin,FILE * fout){
-    int64_t fp = 0;
-    memcpy(&fp,&in->file_ptr,5);
-    fseek(fin,fp,SEEK_SET);
-    char * in_sam = malloc(in->sam_size + 1);
-    memset(in_sam,0,in->sam_size+1);
-    fread(in_sam,sizeof(char),in->sam_size,fin);
-    in_sam[in->sam_size] = '\0';
-
-    //TODO: Add extra flag to sam for duplicates
-    //fprintf(fout,"*****");
-    err_fputs(in_sam, fout);
-    free(in_sam);
-}
-
-void print_umt_entry(umt_entry * in,FILE * fin, FILE * fout){
-    int64_t fp = 0;
-    memcpy(&fp,&in->file_ptr,5);
-    fseek(fin,fp,SEEK_SET);
-    char * in_sam = malloc(in->sam_size + 1);
-    memset(in_sam,0,in->sam_size+1);
-    fread(in_sam,sizeof(char),in->sam_size,fin);
-    in_sam[in->sam_size] = '\0';
-    err_fputs(in_sam, fout);
-    free(in_sam);
-}
-
-void print_full_dpt(){
-    int i = 0;
-    fprintf(stderr,"Sorted dpt : \n");
-    for(i = 0;i<dpt_length;i++){
-        fprintf(stderr,"Ref pos : %ld\n",dpt[i]->ref_pos);
+int is_duplicate(sort_info * sort_in, md_info * md_in){
+    if(sort_in->correction == md_in->correction && sort_in->avg_qual == md_in->avg_qual){
+        return 0;
+    } 
+    else {
+        return 1;
     }
 }
+
 
 void get_sorted_sam(){
 
     fclose(temp_unsorted_file);
-    temp_unsorted_file = fopen(temp_unsorted_file_name,"r");
     int64_t i = 0;
    
     struct timeval qsort_st, qsort_et;
     gettimeofday(&qsort_st,NULL);
-    fprintf(stderr,"Total duplicates detected : %d\n",dpt_length);
-    if(dpt_length > 0){
-        fprintf(stderr,"Sorting the duplicate table\n");
-        qsort(dpt,dpt_length,sizeof(dpt_entry *),comparator);
-        fprintf(stderr,"Finished duplicate table sort\n");
+    fprintf(stderr,"Total entries in sort_ot : %d\n",sort_ot_length);
+    if(sort_ot_length > 0){
+        fprintf(stderr,"Sorting the sort_ot\n");
+        qsort(sort_ot,sort_ot_length,sizeof(sort_ot_entry *),sort_comparator);
+        fprintf(stderr,"Finished sort\n");
     }
     gettimeofday(&qsort_et,NULL);
     double qsort_time = ((double)qsort_et.tv_sec - (double)qsort_st.tv_sec) + (double)((double)(qsort_et.tv_usec - qsort_st.tv_usec) / (double)(1000000));
     fprintf(stderr,"Qsort time : %f\n",qsort_time);
+    int64_t count_duplicates = 0;
+    int64_t head = 0;
+    int64_t md_index = 0;
 
-    fprintf(stderr,"Starting sorted prints\n");
-    int head = 0;
-    for(i=0;i<mt_length;i++){
-        while(head < dpt_length && dpt[head]->ref_pos < i){
-            print_dpt_entry(dpt[head],temp_unsorted_file,stdout); 
-            head++;
-        }
-        if(sort_verbose >= 5 && (mt[i].fe.avg_qual != 0 || mt[i].re.avg_qual != 0)){
-            fprintf(stdout,"Index : %ld, ",i);
-        }
-        print_mt_entry(&mt[i].fe,temp_unsorted_file,stdout);
-        print_mt_entry(&mt[i].re,temp_unsorted_file,stdout);
-    } 
 
-    for(i=0;i<umt_length;i++){
-        print_umt_entry(umt[i],temp_unsorted_file,stdout);
+    gettimeofday(&qsort_st,NULL);
+    for(i = 0;i<mt_length;i++){
+        if(head < sort_ot_length){
+            while (sort_ot[head]->ref_pos < i){
+                md_index = sort_ot[head]->ref_pos - sort_ot[head]->si.correction;
+                if(sort_ot[head]->is_rev){
+                        count_duplicates += is_duplicate(&sort_ot[head]->si, &mt[md_index].re.mdi);
+                }
+                else{
+                        count_duplicates += is_duplicate(&sort_ot[head]->si, &mt[md_index].fe.mdi);
+                }
+
+                head++;
+                if(head >= sort_ot_length){
+                    break;
+                }
+            }
+        }
+        md_index = i - mt[i].fe.si.correction;
+        count_duplicates += is_duplicate(&mt[i].fe.si, &mt[md_index].fe.mdi);
+        
+        md_index = i - mt[i].re.si.correction;
+        count_duplicates += is_duplicate(&mt[i].re.si, &mt[md_index].re.mdi);
     }
-    fclose(temp_unsorted_file);
+    gettimeofday(&qsort_et,NULL);
+    qsort_time = ((double)qsort_et.tv_sec - (double)qsort_st.tv_sec) + (double)((double)(qsort_et.tv_usec - qsort_st.tv_usec) / (double)(1000000));
+    fprintf(stderr,"Mark duplicate time : %f\n",qsort_time);
+
+    return;
+
+
 }
 
 void usage(){
@@ -365,10 +280,8 @@ int get_sequence(char * line, size_t size, int64_t * chr_start, int64_t * chr_st
         return -1;
     }
 
-    int i = 0;
     char * splits;
     char delim = '\t';
-    int64_t len = 0;
 
     chr_start_array[*chr_index] = *chr_start;
     *chr_index += 1;
@@ -533,12 +446,12 @@ void sort_start(){
 
     double rtime;
     double prev_rtime, curr_rtime;
-    int64_t read_count;
+    int64_t read_count = 0;
 
     rtime = realtime();
 
     while(!feof(temp_unsorted_file)){
-        int64_t file_ptr = (int64_t) ftell(temp_unsorted_file);
+        file_ptr = (int64_t) ftell(temp_unsorted_file);
         ret = getline(&line,&line_size,temp_unsorted_file);
         if(ret != -1){
             if(line[0] == '@'){
@@ -566,7 +479,7 @@ void sort_start(){
     }
     double sam_process_time = 0.0;
     if(line != NULL){
-        int64_t file_ptr = (int64_t) ftell(temp_unsorted_file);
+        file_ptr = (int64_t) ftell(temp_unsorted_file);
         get_sam_record(line, strlen(line), chr_start_array, file_ptr, &sam_process_time);
         read_count++;
     }
