@@ -79,14 +79,78 @@ typedef struct {
 
 typedef struct { size_t n, m; mem_alnreg_t *a; } mem_alnreg_v;
 
+
+
+
+/************
+ * Chaining *
+ ************/
+
+typedef struct {
+	int64_t rbeg;
+	int32_t qbeg, len;
+	int score;
+} mem_seed_t; // unaligned memory
+
+typedef struct {
+	int n, m, first, rid;
+	uint32_t w:29, kept:2, is_alt:1;
+	float frac_rep;
+	int64_t pos;
+	mem_seed_t *seeds;
+} mem_chain_t;
+
+typedef struct { size_t n, m; mem_chain_t *a;  } mem_chain_v;
+
+
+
+
+
+
+
+
+
+typedef struct {
+        // TODO add alignment entries
+        uint8_t score;
+        int fpga_entry_present;
+
+} fpga_data_out_t;
+
+
+
+
+
+
+
+typedef struct {
+    size_t n,m;
+    fpga_data_out_t *a; 
+} fpga_data_out_v;
+
+
 typedef struct {
 	int low, high;   // lower and upper bounds within which a read pair is considered to be properly paired
 	int failed;      // non-zero if the orientation is not supported by sufficient data
 	double avg, std; // mean and stddev of the insert size distribution
 } mem_pestat_t;
 
+
+
+
+
+
+
+
+
+
+
+
+
 typedef struct { // This struct is only used for the convenience of API.
 	int64_t pos;     // forward strand 5'-end mapping position
+    int64_t aln_abs_pos; // Abs position of aln in forward+reverse strand
+    uint8_t correction;
 	int rid;         // reference sequence index in bntseq_t; <0 for unmapped
 	int flag;        // extra flag
 	uint32_t is_rev:1, is_alt:1, mapq:8, NM:22; // is_rev: whether on the reverse strand; mapq: mapping quality; NM: edit distance
@@ -96,6 +160,14 @@ typedef struct { // This struct is only used for the convenience of API.
 
 	int score, sub, alt_sc;
 } mem_aln_t;
+
+typedef struct {
+	bwtintv_v mem, mem1, *tmpv[2];
+} smem_aux_t;
+
+
+
+
 
 #ifdef __cplusplus
 extern "C" {
@@ -132,7 +204,7 @@ extern "C" {
 	 * @param pes0   insert-size info; if NULL, infer from data; if not NULL, it should be an array with 4 elements,
 	 *               corresponding to each FF, FR, RF and RR orientation. See mem_pestat() for more info.
 	 */
-	void mem_process_seqs(const mem_opt_t *opt, const bwt_t *bwt, const bntseq_t *bns, const uint8_t *pac, int64_t n_processed, int n, bseq1_t *seqs, const mem_pestat_t *pes0);
+	void mem_process_seqs(const mem_opt_t *opt, const bwt_t *bwt, bntseq_t *bns, const uint8_t *pac, int64_t n_processed, int n, bseq1_t *seqs, const mem_pestat_t *pes0, int fd1);
 
 	/**
 	 * Find the aligned regions for one query sequence

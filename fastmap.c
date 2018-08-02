@@ -12,6 +12,22 @@
 #include "utils.h"
 #include "bntseq.h"
 #include "kseq.h"
+#include "memsort.h"
+
+#include <fpga_pci.h>
+#include <fpga_mgmt.h>
+#include <utils/lcd.h>
+#include <stdio.h>
+#include <fcntl.h>
+#include <errno.h>
+#include <string.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <poll.h>
+#include <sys/time.h>
+
+#define	MEM_16G		(1ULL << 34)
+#define NUM_BINS    200
 KSEQ_DECLARE(gzFile)
 
 extern unsigned char nst_nt4_table[256];
@@ -19,6 +35,11 @@ extern unsigned char nst_nt4_table[256];
 void *kopen(const char *fn, int *_fd);
 int kclose(void *a);
 void kt_pipeline(int n_threads, void *(*func)(void*, int, void*), void *shared_data, int n_steps);
+
+int fd1 = -1;
+
+
+
 
 typedef struct {
 	kseq_t *ks, *ks2;
@@ -34,6 +55,148 @@ typedef struct {
 	int n_seqs;
 	bseq1_t *seqs;
 } ktp_data_t;
+
+static uint16_t pci_vendor_id = 0x1D0F; /* Amazon PCI Vendor ID */
+static uint16_t pci_device_id = 0xF000;
+uint64_t fpga_mem_write_offset1 = 0;
+
+
+
+
+static int
+check_slot_config(int slot_id)
+{
+    int rc;
+    struct fpga_mgmt_image_info info = {0};
+
+    // get local image description, contains status, vendor id, and device id
+    rc = fpga_mgmt_describe_local_image(slot_id, &info, 0);
+    fail_on(rc, out, "Unable to get local image information. Are you running as root?");
+
+    // check to see if the slot is ready 
+    if (info.status != FPGA_STATUS_LOADED) {
+        rc = 1;
+        fail_on(rc, out, "Slot %d is not ready", slot_id);
+    }
+
+    // confirm that the AFI that we expect is in fact loaded
+    if (info.spec.map[FPGA_APP_PF].vendor_id != pci_vendor_id ||
+        info.spec.map[FPGA_APP_PF].device_id != pci_device_id) {
+        rc = 1;
+        printf("The slot appears loaded, but the pci vendor or device ID doesn't "
+               "match the expected values. You may need to rescan the fpga with \n"
+               "fpga-describe-local-image -S %i -R\n"
+               "Note that rescanning can change which device file in /dev/ a FPGA will map to.\n"
+               "To remove and re-add your edma driver and reset the device file mappings, run\n"
+               "`sudo rmmod edma-drv && sudo insmod <aws-fpga>/sdk/linux_kernel_drivers/edma/edma-drv.ko`\n",
+               slot_id);
+        fail_on(rc, out, "The PCI vendor id and device of the loaded image are "
+                         "not the expected values.");
+    }
+
+out:
+    return rc;
+}
+
+int fastmap_write_to_fpga(uint32_t *buffer, int channel, size_t buffer_size){
+
+    int rc = 0;
+    rc = pwrite(fd1,
+            buffer + 0,
+            (buffer_size),
+            channel*MEM_16G + fpga_mem_write_offset1
+            );
+    if (rc < 0) {
+        fprintf(stderr,"[ERROR]call to pwrite failed.\n");
+    }
+    fpga_mem_write_offset1 += rc;
+    fprintf(stderr,"rc : %d\n",rc);
+    return rc;
+
+}
+
+void fastmap_push_to_lsb_64(uint32_t *ar, int size, uint64_t new_char, int shift){
+    int carry = 0;
+    int shift_internal = shift;
+    int i;
+    while (shift_internal--) {                           // For each bit to shift ...
+        for (i = 0; i < size; i++) {   // For each element of the array from high to low ...
+            int next = (ar[i] & 0x80000000) ? 1 : 0;  // ... if the low bit is set, set the carry bit.
+            ar[i] = carry | (ar[i] << 1);       // Shift the element one bit left and addthe old carry.
+            carry = next;                       // Remember the old carry for next time.
+        }   
+    }
+    
+    uint32_t char1= new_char & 0xFFFFFFFF;
+    uint32_t char2= new_char>>32;
+
+
+    ar[0] = char1 | ar[0];
+    ar[1] = char2 | ar[1];
+}
+
+    void encode_ann_seqs_data(uint64_t seq_start, uint64_t seq_end, uint64_t seq2_start, uint64_t seq2_end, uint32_t *ar){
+        int ar_size = 8;
+
+        // Seq2_end 
+        fastmap_push_to_lsb_64(ar,ar_size,seq2_end,64);
+        
+        // Seq2_start 
+        fastmap_push_to_lsb_64(ar,ar_size,seq2_start,64);
+        
+        // Seq_end 
+        fastmap_push_to_lsb_64(ar,ar_size,seq_end,64);
+        
+        // Seq_start 
+        fastmap_push_to_lsb_64(ar,ar_size,seq_start,64);
+    }
+
+int write_ann_data_to_fpga(const bntseq_t *bns, int channel){
+    int64_t l_pac_2 = (bns->l_pac);
+    if(bwa_verbose >= 10){
+        printf("l_pac for ann_data_to_fpga : %lu\n",l_pac_2);
+    }
+    int n_seqs = bns->n_seqs;
+    int i = 0;
+    int rc = 0;
+    size_t ann_write_buffer_size = n_seqs * 32;
+    uint32_t *ann_write_buffer = malloc(ann_write_buffer_size); // TODO: Magic number size of each seq entry
+    int ann_write_buffer_index = 0;
+    for(i=0;i<n_seqs;i++){
+        bntann1_t ann = bns->anns[i];
+        uint64_t seq_start = ann.offset;
+        uint64_t seq_end = ann.offset + ann.len - 1;
+        uint64_t seq2_start = l_pac_2 - (ann.offset + ann.len); 
+        uint64_t seq2_end = l_pac_2 - ann.offset - 1; 
+        if(bwa_verbose >= 10){
+            printf("@%lu %lu %lu %lu\n",seq_start,seq_end,seq2_start,seq2_end);
+        }
+        encode_ann_seqs_data(seq_start, seq_end, seq2_start,seq2_end,ann_write_buffer + ann_write_buffer_index);
+        ann_write_buffer_index += 8;
+    }
+
+    if(bwa_verbose >= 10){
+        printf("Ann write buffer size : %zd\n",ann_write_buffer_size);
+    }
+    rc = fastmap_write_to_fpga(ann_write_buffer,channel,ann_write_buffer_size);
+
+    if(ann_write_buffer)
+        free(ann_write_buffer);
+
+    return rc;
+}
+
+
+int write_pac_to_fpga(const uint8_t *pac, int64_t l_pac,int channel){
+    //int64_t l_pac_2 = (l_pac)>>2;
+    size_t l_pac_bytes = (l_pac)>>2;
+    //printf("For pac writing : %lu\n",l_pac_2);
+    //write_buffer_capacity = 256 * 16 * sizeof(uint32_t);
+
+    int rc = fastmap_write_to_fpga((uint32_t*)(pac),channel,l_pac_bytes);
+    return 0; 
+}
+
 
 static void *process(void *shared, int step, void *_data)
 {
@@ -60,7 +223,8 @@ static void *process(void *shared, int step, void *_data)
 		return ret;
 	} else if (step == 1) {
 		const mem_opt_t *opt = aux->opt;
-		const bwaidx_t *idx = aux->idx;
+		//const bwaidx_t *idx = aux->idx;
+		bwaidx_t *idx = aux->idx;
 		if (opt->flag & MEM_F_SMARTPE) {
 			bseq1_t *sep[2];
 			int n_sep[2];
@@ -70,23 +234,26 @@ static void *process(void *shared, int step, void *_data)
 				fprintf(stderr, "[M::%s] %d single-end sequences; %d paired-end sequences\n", __func__, n_sep[0], n_sep[1]);
 			if (n_sep[0]) {
 				tmp_opt.flag &= ~MEM_F_PE;
-				mem_process_seqs(&tmp_opt, idx->bwt, idx->bns, idx->pac, aux->n_processed, n_sep[0], sep[0], 0);
+				mem_process_seqs(&tmp_opt, idx->bwt, idx->bns, idx->pac, aux->n_processed, n_sep[0], sep[0], 0, fd1);
 				for (i = 0; i < n_sep[0]; ++i)
 					data->seqs[sep[0][i].id].sam = sep[0][i].sam;
 			}
 			if (n_sep[1]) {
 				tmp_opt.flag |= MEM_F_PE;
-				mem_process_seqs(&tmp_opt, idx->bwt, idx->bns, idx->pac, aux->n_processed + n_sep[0], n_sep[1], sep[1], aux->pes0);
+				mem_process_seqs(&tmp_opt, idx->bwt, idx->bns, idx->pac, aux->n_processed + n_sep[0], n_sep[1], sep[1], aux->pes0, fd1);
 				for (i = 0; i < n_sep[1]; ++i)
 					data->seqs[sep[1][i].id].sam = sep[1][i].sam;
 			}
 			free(sep[0]); free(sep[1]);
-		} else mem_process_seqs(opt, idx->bwt, idx->bns, idx->pac, aux->n_processed, data->n_seqs, data->seqs, aux->pes0);
+		} else mem_process_seqs(opt, idx->bwt, idx->bns, idx->pac, aux->n_processed, data->n_seqs, data->seqs, aux->pes0, fd1);
 		aux->n_processed += data->n_seqs;
 		return data;
 	} else if (step == 2) {
+
 		for (i = 0; i < data->n_seqs; ++i) {
-			if (data->seqs[i].sam) err_fputs(data->seqs[i].sam, stdout);
+            
+			//if (data->seqs[i].sam) err_fputs(data->seqs[i].sam, stdout);
+            process_sam_record(&data->seqs[i]);
 			free(data->seqs[i].name); free(data->seqs[i].comment);
 			free(data->seqs[i].seq); free(data->seqs[i].qual); free(data->seqs[i].sam);
 		}
@@ -356,8 +523,71 @@ int main_mem(int argc, char *argv[])
 			opt->flag |= MEM_F_PE;
 		}
 	}
+
+    
+    int rc = 0;
+
+    rc = fpga_mgmt_init();
+    //char *afi_id = "agfi-04679145e6d52c9a0";
+    int slot_id = 0;
+
+    char device_file_name[256];
+    rc = sprintf(device_file_name, "/dev/edma%i_queue_1", slot_id);
+    if(rc<0){
+        fprintf(stderr,"Unable to formate device file name");
+    }
+    //fail_on((rc = (rc < 0)? 1:0), out, "Unable to format device file name.");
+    //printf("device_file_name=%s\n", device_file_name);
+
+    // make sure the AFI is loaded and ready
+    rc = check_slot_config(slot_id);
+    //fail_on(rc, out, "slot config is not correct");
+
+    fd1 = open(device_file_name, O_RDWR);
+    if(fd1<0){
+        fprintf(stderr,"Cannot open device file %s.\nMaybe the EDMA "
+               "driver isn't installed, isn't modified to attach to the PCI ID of "
+               "your CL, or you're using a device file that doesn't exist?\n"
+               "See the edma_install manual at <aws-fpga>/sdk/linux_kernel_drivers/edma/edma_install.md\n"
+               "Remember that rescanning your FPGA can change the device file.\n"
+               "To remove and re-add your edma driver and reset the device file mappings, run\n"
+               "`sudo rmmod edma-drv && sudo insmod <aws-fpga>/sdk/linux_kernel_drivers/edma/edma-drv.ko`\n",
+               device_file_name);
+        fprintf(stderr,"Unable to open DMA queue");
+        //fail_on((rc = (fd < 0)? 1:0), out, "unable to open DMA queue. ");
+    }
+
+    int channel = 2;
+    fpga_mem_write_offset1 = 0;
+    /*write_ann_data_to_fpga(aux.idx->bns,channel);
+    sleep(2);
+    fprintf(stderr,"Lseek after ann write : %zd\n",lseek(fd1,0,SEEK_CUR));
+
+    rc = fsync(fd1);
+    fprintf(stderr,"Lseek after fsync: %zd\n",lseek(fd1,0,SEEK_CUR));
+    if(rc < 0){
+        fprintf(stderr,"[ERROR] call to fsync failed");
+    }
+    write_pac_to_fpga(aux.idx->pac,aux.idx->bns->l_pac,channel);
+    fprintf(stderr,"Lseek after write pac: %zd\n",lseek(fd1,0,SEEK_CUR));
+    rc = fsync(fd1);
+    fprintf(stderr,"Lseek after fsync: %zd\n",lseek(fd1,0,SEEK_CUR));*/
+    int64_t l_pac_2 = aux.idx->bns->l_pac;
+    aux.idx->bns->l_pac = (l_pac_2>>1);
+    sleep(2);
+
+    rc = fsync(fd1);
+    if(rc < 0){
+        fprintf(stderr,"[ERROR] call to fsync failed");
+    }
+
+    // Create bins
+    //
+    sorting_init(aux.idx->bns->l_pac);
+
 	bwa_print_sam_hdr(aux.idx->bns, hdr_line);
 	aux.actual_chunk_size = fixed_chunk_size > 0? fixed_chunk_size : opt->chunk_size * opt->n_threads;
+	//aux.actual_chunk_size = fixed_chunk_size > 0? fixed_chunk_size : opt->chunk_size;
 	kt_pipeline(no_mt_io? 1 : 2, process, &aux, 3);
 	free(hdr_line);
 	free(opt);
@@ -368,6 +598,25 @@ int main_mem(int argc, char *argv[])
 		kseq_destroy(aux.ks2);
 		err_gzclose(fp2); kclose(ko2);
 	}
+
+    
+    rc = fpga_mgmt_close();
+
+    if (fd1 >= 0) {
+        close(fd1);
+    }
+    
+
+    struct timeval sort_st, sort_et;
+    gettimeofday(&sort_st,NULL);
+    get_sorted_sam();
+    gettimeofday(&sort_et,NULL);
+    double sorting_time = ((double)sort_et.tv_sec - (double)sort_st.tv_sec) + (double)((double)(sort_et.tv_usec - sort_st.tv_usec) / (double)(1000000));
+    fprintf(stderr,"Time to create sorted sam file : %f\n",sorting_time);
+    sorting_close();
+
+
+
 	return 0;
 }
 
@@ -447,3 +696,4 @@ int main_fastmap(int argc, char *argv[])
 	err_gzclose(fp);
 	return 0;
 }
+

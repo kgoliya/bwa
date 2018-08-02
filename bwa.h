@@ -29,6 +29,11 @@ typedef struct {
 
 typedef struct {
 	int l_seq, id;
+    uint32_t read_id;
+    int64_t abs_pos;            // Actual position with correction from cigar
+    uint8_t correction;         // Correction applied on cigar. To get sam mapping position from this, add correction to abs_pos
+    uint8_t is_rev;
+    uint8_t avg_qual;
 	char *name, *comment, *seq, *qual, *sam;
 } bseq1_t;
 
