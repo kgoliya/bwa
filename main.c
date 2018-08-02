@@ -26,6 +26,7 @@ int main_shm(int argc, char *argv[]);
 
 int main_pemerge(int argc, char *argv[]);
 int main_maxk(int argc, char *argv[]);
+int main_memsort(int argc, char *argv[]);
 	
 static int usage()
 {
@@ -86,6 +87,7 @@ int main(int argc, char *argv[])
 	else if (strcmp(argv[1], "shm") == 0) ret = main_shm(argc-1, argv+1);
 	else if (strcmp(argv[1], "pemerge") == 0) ret = main_pemerge(argc-1, argv+1);
 	else if (strcmp(argv[1], "maxk") == 0) ret = main_maxk(argc-1, argv+1);
+	else if (strcmp(argv[1], "sort") == 0) ret = main_memsort(argc-2, argv+2);
 	else {
 		fprintf(stderr, "[main] unrecognized command '%s'\n", argv[1]);
 		return 1;
