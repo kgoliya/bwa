@@ -134,7 +134,7 @@ void add_mt_entry_1(bseq1s_t *seq, int64_t file_ptr, int sam_length){
     half_mt_entry * sort_en;
     half_mt_entry * md_en;
     int64_t fp;
-    
+    assert(seq->abs_pos - seq->correction >= 0);
     if(seq->is_rev){
         sort_en = &mt[seq->abs_pos].re;
         md_en = &mt[seq->abs_pos - seq->correction].re;
@@ -172,11 +172,13 @@ void add_mt_entry_1(bseq1s_t *seq, int64_t file_ptr, int sam_length){
 }
 
 
-void process_sam_record_1(bseq1s_t *seq, int64_t file_ptr, int sam_length){
+void process_sam_record_1(bseq1s_t *seq, int64_t file_ptr, int sam_length, double *sam_rtime){
+
+    double sam_rtime_start = realtime();
     if(seq == NULL){
         return;
     }
-    if(seq->abs_pos >= mt_length){
+    if(seq->abs_pos <= 0){
         // TODO: Manage unmapped entries
         // For now remove them
         return;
@@ -189,6 +191,8 @@ void process_sam_record_1(bseq1s_t *seq, int64_t file_ptr, int sam_length){
             add_mt_entry_1(seq, file_ptr, sam_length);
         }
     }
+
+    *sam_rtime += realtime() - sam_rtime_start;
 }
 
 int sort_comparator(const void **p, const void **q) 
@@ -206,6 +210,11 @@ int sort_comparator(const void **p, const void **q)
 
 
 int is_duplicate(sort_info * sort_in, md_info * md_in){
+
+    if(sort_in->avg_qual == 0){
+        return 1;
+    }
+
     if(sort_in->correction == md_in->correction && sort_in->avg_qual == md_in->avg_qual){
         return 0;
     } 
@@ -234,7 +243,7 @@ void get_sorted_sam(){
     int64_t count_duplicates = 0;
     int64_t head = 0;
     int64_t md_index = 0;
-
+    fprintf(stderr,"mt_length : %d\n",mt_length);
 
     gettimeofday(&qsort_st,NULL);
     for(i = 0;i<mt_length;i++){
@@ -263,9 +272,7 @@ void get_sorted_sam(){
     gettimeofday(&qsort_et,NULL);
     qsort_time = ((double)qsort_et.tv_sec - (double)qsort_st.tv_sec) + (double)((double)(qsort_et.tv_usec - qsort_st.tv_usec) / (double)(1000000));
     fprintf(stderr,"Mark duplicate time : %f\n",qsort_time);
-
     return;
-
 
 }
 
@@ -292,9 +299,6 @@ int get_sequence(char * line, size_t size, int64_t * chr_start, int64_t * chr_st
     splits = strtok(line,&delim); 
     while(splits != NULL){
         if(splits[0] == 'L'){
-            if(sort_verbose >= 5){
-                printf("Splits : %s\n",splits);
-            }
             *chr_start += (int64_t)strtoll(splits + 3, NULL,10);
             break;
         }
@@ -333,6 +337,9 @@ int get_chr_num(char * chr){
 
 int get_correction_from_CIGAR(char * cigar){
     int len = strlen(cigar);
+    if(len < 4){
+        return 0;
+    }
     int i = 0;
     int correction = 0;
     int field_num = 0;
@@ -352,8 +359,8 @@ int get_correction_from_CIGAR(char * cigar){
     return correction;
 }
 
-int get_avg_qual( char * qual){
-    int len = strlen(qual);
+int get_avg_qual( char * qual, int len){
+    //int len = strlen(qual);
     int i = 0;
     int total_qual = 0;
     for(i=0;i<len;i++){
@@ -363,52 +370,102 @@ int get_avg_qual( char * qual){
 }
 
 
+void get_record(char * line, size_t line_size, int *flags, int *chr_num, int64_t *pos, int *correction, int *avg_qual){
+    int i = 0;
+    int field_num = 1;
+
+    int corr = 0;
+    int stop = 0;
+
+    int l_seq = 0;
+
+    for(i = 0;i<line_size;i++){
+        if(line[i] == '\t'){
+            field_num++;
+            stop = 0;
+            if(field_num >= 12){
+                break;
+            }
+        }
+        else if(field_num == 2){
+            *flags = ((*flags) * 10) + ((int)line[i] - 48);
+        }
+        else if(field_num == 3 && stop == 0){
+            if(line[i] == 'C' || line[i] == 'c' || line[i] == 'H' || line[i] == 'h' || line[i] == 'R' || line[i] == 'r'){
+                continue;    
+            }
+            else if((int)line[i] >= (int)'0' && (int)line[i] <= (int)'9'){
+                *chr_num = (*chr_num * 10) + (int)line[i] - 48;
+            }
+            else if(line[i] == 'X' || line[i] == 'x'){
+                *chr_num = 23;
+            }
+            else if(line[i] == 'Y' || line[i] == 'y'){
+                *chr_num = 24;
+            }
+            else{
+                *chr_num = -1;
+                stop = 1;
+            }
+        }
+        else if(field_num == 4 && stop == 0){
+            if((int)line[i] >= (int)'0' && (int)line[i] <= (int)'9'){
+                *pos = (*pos * 10) + (int)line[i] - 48;
+            }
+            else{
+                *pos = -1;
+                stop = 1;
+            }
+        }
+        else if(field_num == 6 && stop == 0){
+            if((int)line[i] >= (int)'0' && (int)line[i] <= (int)'9'){
+                corr = corr * 10 + (int)line[i] - 48;
+            }
+            else if(line[i] != 'M'){
+                *correction += corr;
+                corr = 0;
+            }
+            else if(line[i] == 'M'){
+                stop = 1;
+            }
+        }
+        else if(field_num == 11){
+            *avg_qual = *avg_qual + (int)line[i] - 33;
+            l_seq++;
+        }
+    }
+
+    *avg_qual = *avg_qual / l_seq;
+    return;
+}
+
+
+
 void get_sam_record(char * line, size_t line_size, int64_t * chr_start_array, int64_t file_ptr, double * sam_rtime){
     
-    double sam_rtime_start = realtime();
     char * splits = 0;
     int field_num = 0;
 
-    int16_t flags = 0;          // Field 2
+    int flags = 0;          // Field 2
     int chr_num = 0;            // Field 3
     int64_t pos = 0;            // Field 4
     int correction = 0;         // From CIGAR Field 6
+    int l_seq = 0;
     int avg_qual = 0;           // Field 11
     char delim = '\t';
 
-    splits = strtok(line,&delim);
-    while(splits != NULL){
-        field_num++;
-        if(field_num == 2){
-            flags = (int)strtol(splits,NULL,10);
-        }
-        else if(field_num == 3){
-            chr_num = get_chr_num(splits);
-            if(sort_verbose >= 5){
-                printf("CHr num : %d ",chr_num);
-            }
-        }
-        else if(field_num == 4){
-            pos = (int64_t)strtoll(splits, NULL, 10);
-            if(chr_num == -1){
-                pos = l_pac_global;
-            }
-            pos += chr_start_array[chr_num-1];
-            if(sort_verbose >= 5){
-                printf("Pos : %ld , chr_start : %ld",pos, chr_start_array[chr_num-1]);
-            }
-        }
-        else if(field_num == 6){
-            correction = get_correction_from_CIGAR(splits);
-        }
-        else if(field_num == 11){
-            avg_qual = get_avg_qual(splits);
-            break;
-        }
-        splits = strtok(NULL,&delim);
-    }
+
+    get_record(line, line_size, &flags, &chr_num, &pos, &correction, &avg_qual);
 
     // TODO create the table
+
+
+    if(sort_verbose >= 5){
+        fprintf(stderr,"flags : %d, chr_num : %d, pos : %ld, corr : %d\n",flags,chr_num,pos,correction);
+    }
+    if(pos != -1 && chr_num != -1){
+        pos += chr_start_array[chr_num-1];
+    }
 
     bseq1s_t seq;
     seq.l_seq = 0;
@@ -425,12 +482,10 @@ void get_sam_record(char * line, size_t line_size, int64_t * chr_start_array, in
     seq.qual = NULL;
     seq.sam = NULL;
 
-    if(sort_verbose >= 5){
-        printf("pos : %ld,correction : %d\n",pos,correction);
+    if(chr_num != -1){
+        process_sam_record_1(&seq,file_ptr,line_size, sam_rtime);
     }
-    process_sam_record_1(&seq,file_ptr,line_size);
 
-    *sam_rtime += realtime() - sam_rtime_start;
 } 
 
 
@@ -441,6 +496,13 @@ void print_seqs(int64_t * chr_start){
     }
 }
 
+/*void print_strings(char * in, int len){
+    int i;
+    for(i = 0;i<len;i++){
+        printf("%s",in[i]);
+    }
+    printf("\n");
+}*/
 
 void sort_start(){
     char * line;
@@ -513,10 +575,11 @@ void sort_start(){
             get_sam_record(line, strlen(line), chr_start_array, file_ptr, &sam_process_time);
             read_count++;
         }
+
         if(read_count % 1000000 == 0 && sort_verbose >= 3){
+            
             curr_rtime = realtime() - rtime;
             fprintf(stderr,"Read %ld reads in %f secs, read processing time : %f secs \t|\t Total : %f secs \n",read_count,curr_rtime - prev_rtime,sam_process_time,curr_rtime);
-            fprintf(stderr,"[DATA],%ld,%f,%f,%f\n",read_count,curr_rtime - prev_rtime,sam_process_time,curr_rtime);
             prev_rtime = curr_rtime;
             sam_process_time = 0.0;
         }
