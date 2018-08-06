@@ -66,7 +66,7 @@ void sorting_init_1(int64_t l_pac){            // Assuming this l_pac is size of
     mt = (mt_entry * ) malloc((l_pac) * sizeof(mt_entry));
     sort_ot = (sort_ot_entry ** ) malloc(sort_ot_size * sizeof(sort_ot_entry *));
     md_ot = (md_ot_entry ** ) malloc(md_ot_size * sizeof(md_ot_entry *));
-    memset(mt,0,((l_pac) + 1) * sizeof(mt_entry));
+    memset(mt,0,((l_pac)) * sizeof(mt_entry));
     mt_length = l_pac;
     
     memset(sort_ot,0,(sort_ot_size * sizeof(sort_ot_entry *)));
@@ -275,12 +275,15 @@ void usage(){
 
 
 int get_sequence(char * line, size_t size, int64_t * chr_start, int64_t * chr_start_array, int * chr_index){
-    
+   
+    if(sort_verbose >= 5){
+        printf("Line : %s",line);
+    } 
     if(line[1] != 'S'){
         return -1;
     }
 
-    char * splits;
+    char * splits = NULL;
     char delim = '\t';
 
     chr_start_array[*chr_index] = *chr_start;
@@ -289,6 +292,9 @@ int get_sequence(char * line, size_t size, int64_t * chr_start, int64_t * chr_st
     splits = strtok(line,&delim); 
     while(splits != NULL){
         if(splits[0] == 'L'){
+            if(sort_verbose >= 5){
+                printf("Splits : %s\n",splits);
+            }
             *chr_start += (int64_t)strtoll(splits + 3, NULL,10);
             break;
         }
@@ -377,7 +383,10 @@ void get_sam_record(char * line, size_t line_size, int64_t * chr_start_array, in
             flags = (int)strtol(splits,NULL,10);
         }
         else if(field_num == 3){
-            chr_num = get_chr_num(splits); 
+            chr_num = get_chr_num(splits);
+            if(sort_verbose >= 5){
+                printf("CHr num : %d ",chr_num);
+            }
         }
         else if(field_num == 4){
             pos = (int64_t)strtoll(splits, NULL, 10);
@@ -385,6 +394,9 @@ void get_sam_record(char * line, size_t line_size, int64_t * chr_start_array, in
                 pos = l_pac_global;
             }
             pos += chr_start_array[chr_num-1];
+            if(sort_verbose >= 5){
+                printf("Pos : %ld , chr_start : %ld",pos, chr_start_array[chr_num-1]);
+            }
         }
         else if(field_num == 6){
             correction = get_correction_from_CIGAR(splits);
@@ -420,6 +432,14 @@ void get_sam_record(char * line, size_t line_size, int64_t * chr_start_array, in
 
     *sam_rtime += realtime() - sam_rtime_start;
 } 
+
+
+void print_seqs(int64_t * chr_start){
+    int i = 0;
+    for(i = 0;i<24;i++){
+        fprintf(stderr,"[%d] %ld\n",i+1,chr_start[i]);
+    }
+}
 
 
 void sort_start(){
@@ -466,8 +486,9 @@ void sort_start(){
         }
     }
 
-    if(sort_verbose >= 5){
-        printf("Lpac : %ld\n", chr_start);
+    print_seqs(chr_start_array);
+    if(sort_verbose >= 3){
+        fprintf(stderr,"Lpac : %ld\n", chr_start);
     }
 
     l_pac_global = chr_start;
