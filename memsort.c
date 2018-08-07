@@ -211,8 +211,8 @@ int sort_comparator(const void **p, const void **q)
 
 int is_duplicate(sort_info * sort_in, md_info * md_in){
 
-    if(sort_in->avg_qual == 0){
-        return 1;
+    if(sort_in->avg_qual == 0 || md_in->avg_qual == 0){
+        return 0;
     }
 
     if(sort_in->correction == md_in->correction && sort_in->avg_qual == md_in->avg_qual){
@@ -243,7 +243,9 @@ void get_sorted_sam(){
     int64_t count_duplicates = 0;
     int64_t head = 0;
     int64_t md_index = 0;
-    fprintf(stderr,"mt_length : %d\n",mt_length);
+    if(sort_verbose >= 3){
+        fprintf(stderr,"mt_length after : %ld\n",mt_length);
+    }
 
     gettimeofday(&qsort_st,NULL);
     for(i = 0;i<mt_length;i++){
@@ -272,6 +274,8 @@ void get_sorted_sam(){
     gettimeofday(&qsort_et,NULL);
     qsort_time = ((double)qsort_et.tv_sec - (double)qsort_st.tv_sec) + (double)((double)(qsort_et.tv_usec - qsort_st.tv_usec) / (double)(1000000));
     fprintf(stderr,"Mark duplicate time : %f\n",qsort_time);
+    fprintf(stderr,"Total duplicates : %d\n",count_duplicates);
+
     return;
 
 }
@@ -548,13 +552,19 @@ void sort_start(){
         }
     }
 
-    print_seqs(chr_start_array);
     if(sort_verbose >= 3){
         fprintf(stderr,"Lpac : %ld\n", chr_start);
     }
 
     l_pac_global = chr_start;
+    if(sort_verbose >= 3){
+        fprintf(stderr,"Initializing sorter tables\n");
+    }
     sorting_init_1(chr_start);
+
+    if(sort_verbose >= 3){
+        fprintf(stderr,"Mt_length after init : %ld\n",mt_length);
+    }
 
     if(sort_verbose >= 3){
         fprintf(stderr,"Finished initialization | %f secs\n",realtime() - rtime);
@@ -579,13 +589,14 @@ void sort_start(){
         if(read_count % 1000000 == 0 && sort_verbose >= 3){
             
             curr_rtime = realtime() - rtime;
-            fprintf(stderr,"Read %ld reads in %f secs, read processing time : %f secs \t|\t Total : %f secs \n",read_count,curr_rtime - prev_rtime,sam_process_time,curr_rtime);
+            fprintf(stderr,"Read %ld reads in  %f secs\n",read_count,sam_process_time);
             prev_rtime = curr_rtime;
-            sam_process_time = 0.0;
+            //sam_process_time = 0.0;
         }
     }
     if(sort_verbose >= 3){
         fprintf(stderr,"Read %ld reads | %f secs\n",read_count,realtime() - rtime);
+        fprintf(stderr,"Total sam process time : %f\n",sam_process_time);
     }
 
     if(line)
