@@ -15,8 +15,6 @@
 #include "kvec.h"
 #include "ksort.h"
 #include "utils.h"
-#include <fpga_pci.h>
-#include <fpga_mgmt.h>
 #include <utils/lcd.h>
 #include <stdio.h>
 #include <fcntl.h>
@@ -197,9 +195,6 @@ void queueDel (queue *q, queue_t **out)
     return;
 }
 
-static uint16_t pci_vendor_id = 0x1D0F; /* Amazon PCI Vendor ID */
-static uint16_t pci_device_id = 0xF000;
-
 int fpga_verbose = 0;
 
     // FPGA Write Buffers
@@ -214,10 +209,10 @@ int fpga_verbose = 0;
 
     uint64_t fpga_mem_write_offset = 0;
 
-    int fd = -1;
     uint16_t vled;
     uint16_t vdip;
-
+    
+    pci_bar_handle_t bw_pci_bar_handle;
 
 
 
@@ -226,7 +221,7 @@ int fpga_verbose = 0;
 
 
 //int write_to_fpga(uint32_t *buffer){
-int write_to_fpga(uint8_t *buffer, int channel, size_t buffer_size){
+int write_to_fpga(pci_bar_handle_t pci_bar_handle, uint8_t *buffer, int channel, size_t buffer_size){
 
     int rc = 0;
     int j = 0;
@@ -240,65 +235,13 @@ int write_to_fpga(uint8_t *buffer, int channel, size_t buffer_size){
                 for(i = 8-4;i>=0;i -= 4){
                     printf("%x",buffer[j*64 + k]>>i & 0xF);
                 }
-                
             }
             printf("\n");
         }
     }
 
-        rc = pwrite(fd,
-                buffer + 0,
-                (buffer_size),
-                channel*MEM_16G + fpga_mem_write_offset
-                );
-        if (rc < 0) {
-            printf("call to pwrite failed.");
-        }
-            fpga_mem_write_offset += rc;
-            usleep(50);
-    rc = fsync(fd);
-    if(rc < 0){
-        fprintf(stderr,"[ERROR] fsync failed\n");
-    }
-    /*for(i = 0;i<buffer_size;i+=8*1024){
-        if(buffer_size - i > 8*1024){
-            rc = pwrite(fd,
-                    buffer + i,
-                    (8*1024),
-                    channel*MEM_16G + i + fpga_mem_write_offset
-                    );
-            if (rc < 0) {
-                fprintf(stderr,"[ERROR] call to pwrite failed.\n");
-                return rc;
-            }
-            fpga_mem_write_offset += rc;
-        }
-        else{
-            rc = pwrite(fd,
-                    buffer + i,
-                    (buffer_size - i),
-                    channel*MEM_16G + i + fpga_mem_write_offset
-                    );
-            if (rc < 0) {
-                fprintf(stderr,"[ERROR] call to pwrite failed.\n");
-                return rc;
-            }
-            fpga_mem_write_offset += rc;
-        }
-    }
-    if(buffer_size > i){
-        rc = pwrite(fd,
-                buffer + i,
-                (buffer_size - i),
-                channel*MEM_16G + i + fpga_mem_write_offset
-                );
-        if (rc < 0) {
-            fprintf(stderr,"[ERROR] call to pwrite failed.\n");
-            return rc;
-        }
-        fpga_mem_write_offset += rc;
-    }
-    rc = fsync(fd);*/
+    rc = fpga_pci_write_burst(pci_bar_handle, channel * MEM_16G, (uint32_t *)buffer, (buffer_size / sizeof(uint32_t)));
+
     return rc;
 }
 
@@ -1840,7 +1783,7 @@ void seed_extension(const mem_opt_t *opt, const bwt_t *bwt, const bntseq_t *bns,
         int64_t rmax1 = 0;
 
         fetch_rmaxs(opt, bns,pac, l_seq, (uint8_t*) seq, p, regs, &rmax0, &rmax1);
-        if((rmax1 - rmax0) > 0){
+        if((rmax1 - rmax0) > 250){
             // Max allowed ref length
             mem_chain2aln(opt, bns, pac, l_seq, (uint8_t*)seq, p, regs,rmax0,rmax1);
         }
@@ -2196,10 +2139,9 @@ void get_all_scores(uint8_t *read_buffer,queue_t *w,fpga_data_out_v * flv){
 }
 
 
-void read_from_fpga(queue_t* w, fpga_data_out_v * flv, int channel){
+void read_from_fpga(pci_bar_handle_t pci_bar_handle,queue_t* w, fpga_data_out_v * flv, int channel){
     int rc = 0;
      
-
     if(flv->n != 0){   
         if(bwa_verbose >= 10) {
             printf("Num entries in read_from_fpga : %zd\n",flv->n);
@@ -2207,30 +2149,14 @@ void read_from_fpga(queue_t* w, fpga_data_out_v * flv, int channel){
 
         uint32_t read_offset = 0;
         size_t read_buffer_size = flv->n * 64;
-        uint8_t *read_buffer = malloc(read_buffer_size);
+        uint8_t *read_buffer = (uint8_t *)malloc(read_buffer_size);
 
-        rc = pread(fd,
-            read_buffer,
-            read_buffer_size,
-            channel*MEM_16G + read_offset);
-
-     //   rc = fsync(fd);
-
-        /*printf("Printing read buffer data\n");
-
-
-        int k1=0,i1=0;
-        for(k1 = 7;k1>=0;k1--) {
-            for(i1 = 64-4;i1>=0;i1 -= 4){
-                printf("%x",read_buffer[k1]>>i1 & 0xF);
-            }
-
+        int i = 0;
+        for(i=0;i<(read_buffer_size);i++){
+            rc = fpga_pci_peek8(pci_bar_handle,channel * MEM_16G + i, &read_buffer[i]);
         }
-        printf("\n");*/
-
 
         get_all_scores(read_buffer,w,flv);
-
 
         if(read_buffer) {
             free(read_buffer);
@@ -2516,7 +2442,7 @@ static void fpga_worker(void *data){
             if(f1v.n != 0){
                 load_buffer = (uint8_t *)realloc(load_buffer,load_buffer_size + write_buffer_capacity);
                 memset(load_buffer + load_buffer_size,0,write_buffer_capacity);
-                write_to_fpga(load_buffer,0,load_buffer_size + write_buffer_capacity);
+                write_to_fpga(bw_pci_bar_handle,load_buffer,0,load_buffer_size + write_buffer_capacity);
 
                 vdip = 0x0001;
                 rc = fpga_mgmt_set_vDIP(0,vdip);
@@ -2527,17 +2453,11 @@ static void fpga_worker(void *data){
                     }
                 }
 
-                read_from_fpga(qe,&f1v,3);
+                read_from_fpga(bw_pci_bar_handle,qe,&f1v,3);
                 vdip = 0x0000;
                 rc = fpga_mgmt_set_vDIP(0,vdip);
-
             }
             
-            //rc = fsync(fd);
-            //write_to_fpga(allzeros,0,write_buffer_capacity);
-
-
-            //rc = fsync(fd);
 
             free(f1v.a);
             f1v.n = 0;
@@ -2671,7 +2591,7 @@ out:
 }*/
 
 
-void mem_process_seqs(const mem_opt_t *opt, const bwt_t *bwt, bntseq_t *bns, const uint8_t *pac, int64_t n_processed, int n, bseq1_t *seqs, const mem_pestat_t *pes0, int fd1)
+void mem_process_seqs(const mem_opt_t *opt, const bwt_t *bwt, bntseq_t *bns, const uint8_t *pac, int64_t n_processed, int n, bseq1_t *seqs, const mem_pestat_t *pes0, pci_bar_handle_t pci_bar_handle)
 {
 	extern void kt_for(int n_threads, void (*func)(void*,int,int), void *data, int n);
 	extern void kt_for_batch(int n_threads, void (*func)(void*,int,int,int), void *data, int n, int batch_size); // [QA] new kt_for for batch processing
@@ -2683,7 +2603,6 @@ void mem_process_seqs(const mem_opt_t *opt, const bwt_t *bwt, bntseq_t *bns, con
 	int i,j,total_qual;
     int slot_id = 0;
 
-    fd = fd1;
 
         ctime = cputime(); rtime = realtime();
         int rc;
@@ -2698,40 +2617,8 @@ void mem_process_seqs(const mem_opt_t *opt, const bwt_t *bwt, bntseq_t *bns, con
         seqs[i].avg_qual =(uint8_t) (total_qual / l_seq);
     }
 
-        //rc = fpga_mgmt_init();
-
-        /*char device_file_name[256];
-        rc = sprintf(device_file_name, "/dev/edma%i_queue_0", slot_id);
-        if(rc<0){
-            printf("Unable to formate device file name");
-        }
-        //fail_on((rc = (rc < 0)? 1:0), out, "Unable to format device file name.");
-        printf("device_file_name=%s\n", device_file_name);
-
-        // make sure the AFI is loaded and ready 
-        //rc = check_slot_config(slot_id);
-        //fail_on(rc, out, "slot config is not correct");
-
-        fd = open(device_file_name, O_RDWR);
-        if(fd<0){
-            printf("Cannot open device file %s.\nMaybe the EDMA "
-                   "driver isn't installed, isn't modified to attach to the PCI ID of "
-                   "your CL, or you're using a device file that doesn't exist?\n"
-                   "See the edma_install manual at <aws-fpga>/sdk/linux_kernel_drivers/edma/edma_install.md\n"
-                   "Remember that rescanning your FPGA can change the device file.\n"
-                   "To remove and re-add your edma driver and reset the device file mappings, run\n"
-                   "`sudo rmmod edma-drv && sudo insmod <aws-fpga>/sdk/linux_kernel_drivers/edma/edma-drv.ko`\n",
-                   device_file_name);
-            printf("Unable to open DMA queue");
-            //fail_on((rc = (fd < 0)? 1:0), out, "unable to open DMA queue. ");
-        }*/
-
-
-        //Pushing FPGA
-
-        // TODO: Add edma initialization here 
-
         fpga_mem_write_offset = 0;
+        bw_pci_bar_handle = pci_bar_handle;
 
 
 
