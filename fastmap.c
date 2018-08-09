@@ -127,20 +127,11 @@ void fastmap_push_to_lsb_64(uint32_t *ar, int size, uint64_t new_char, int shift
     ar[1] = char2 | ar[1];
 }
 
-    void encode_ann_seqs_data(uint64_t seq_start, uint64_t seq_end, uint64_t seq2_start, uint64_t seq2_end, uint32_t *ar){
-        int ar_size = 8;
-
-        // Seq2_end 
-        fastmap_push_to_lsb_64(ar,ar_size,seq2_end,64);
-        
-        // Seq2_start 
-        fastmap_push_to_lsb_64(ar,ar_size,seq2_start,64);
-        
-        // Seq_end 
-        fastmap_push_to_lsb_64(ar,ar_size,seq_end,64);
-        
-        // Seq_start 
-        fastmap_push_to_lsb_64(ar,ar_size,seq_start,64);
+    void encode_ann_seqs_data(uint64_t seq_start, uint64_t seq_end, uint64_t seq2_start, uint64_t seq2_end, uint64_t *ar){
+        ar[0] = seq_start;
+        ar[1] = seq_end;
+        ar[2] = seq2_start;
+        ar[3] = seq2_end;
     }
 
 int write_ann_data_to_fpga(const bntseq_t *bns, int channel){
@@ -152,7 +143,7 @@ int write_ann_data_to_fpga(const bntseq_t *bns, int channel){
     int i = 0;
     int rc = 0;
     size_t ann_write_buffer_size = n_seqs * 32;
-    uint32_t *ann_write_buffer = (uint32_t*) malloc(ann_write_buffer_size); // TODO: Magic number size of each seq entry
+    uint64_t *ann_write_buffer = (uint64_t*) malloc(ann_write_buffer_size); // TODO: Magic number size of each seq entry
     int ann_write_buffer_index = 0;
     for(i=0;i<n_seqs;i++){
         bntann1_t ann = bns->anns[i];
@@ -161,22 +152,27 @@ int write_ann_data_to_fpga(const bntseq_t *bns, int channel){
         uint64_t seq2_start = l_pac_2 - (ann.offset + ann.len); 
         uint64_t seq2_end = l_pac_2 - ann.offset - 1; 
         if(bwa_verbose >= 10){
-            printf("@%lu %lu %lu %lu\n",seq_start,seq_end,seq2_start,seq2_end);
+            fprintf(stderr,"@%lx %lx %lx %lx\n",seq_start,seq_end,seq2_start,seq2_end);
         }
-        encode_ann_seqs_data(seq_start, seq_end, seq2_start,seq2_end,ann_write_buffer + ann_write_buffer_index);
-        ann_write_buffer_index += 8;
+        encode_ann_seqs_data(seq_start, seq_end, seq2_start,seq2_end,&ann_write_buffer[i*4]);
+        ann_write_buffer_index += 4;
     }
 
     if(bwa_verbose >= 10){
         printf("Ann write buffer size : %zd\n",ann_write_buffer_size);
     }
-    rc = fastmap_write_to_fpga(fm_pci_bar_handle,0,ann_write_buffer,channel,(ann_write_buffer_size / sizeof(uint32_t)));
+
+    
+    /*for(i = 0;i<n_seqs*4;i++){
+        fpga_pci_poke64(fm_pci_bar_handle,channel*MEM_16G + i*8,ann_write_buffer[i]); 
+    }*/
+    rc = fastmap_write_to_fpga(fm_pci_bar_handle,0,(uint32_t *)ann_write_buffer,channel,(ann_write_buffer_size / sizeof(uint32_t)));
     //int fastmap_write_to_fpga(pci_bar_handle_t pci_bar_handle, uint64_t offset, uint32_t *buffer, int channel, size_t buffer_size){
 
     if(ann_write_buffer)
         free(ann_write_buffer);
 
-    return (ann_write_buffer_size / sizeof(uint32_t));
+    return (ann_write_buffer_size);
 }
 
 
@@ -550,6 +546,7 @@ int main_mem(int argc, char *argv[])
 		err_gzclose(fp2); kclose(ko2);
 	}
 
+    fpga_pci_detach(fm_pci_bar_handle);
 
 	return 0;
 }

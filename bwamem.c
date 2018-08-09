@@ -30,8 +30,8 @@
 #endif
 
 #define	MEM_16G		(1ULL << 34)
-#define BATCH_SIZE  1000
-#define TIMEOUT     BATCH_SIZE*2.6      // Microseconds
+#define BATCH_SIZE  100
+#define TIMEOUT     BATCH_SIZE*100*1000      // Nanoseconds
 /* Theory on probability and scoring *ungapped* alignment
  *
  * s'(a,b) = log[P(b|a)/P(b)] = log[4P(b|a)], assuming uniform base distribution
@@ -1744,7 +1744,7 @@ void seeding(const mem_opt_t *opt, const bwt_t *bwt, const bntseq_t *bns, const 
 }
 
 
-void seed_extension(const mem_opt_t *opt, const bwt_t *bwt, const bntseq_t *bns, const uint8_t *pac, int l_seq, char *seq, mem_chain_v * chn, mem_alnreg_v ** alnreg, fpga_data_out_t *data_out, uint8_t** write_buffer, size_t *write_buffer_size, uint32_t *write_buffer_index, uint32_t read_id){
+void seed_extension(const mem_opt_t *opt, const bwt_t *bwt, const bntseq_t *bns, const uint8_t *pac, int l_seq, char *seq, mem_chain_v * chn, mem_alnreg_v ** alnreg, fpga_data_out_t *data_out, uint8_t** write_buffer, size_t *write_buffer_size, uint32_t *write_buffer_index, uint32_t read_id, int run_fpga){
 	
     mem_alnreg_v * regs = (mem_alnreg_v *) malloc(sizeof(mem_alnreg_v));
     memset(regs,0,sizeof(mem_alnreg_v));
@@ -1752,8 +1752,23 @@ void seed_extension(const mem_opt_t *opt, const bwt_t *bwt, const bntseq_t *bns,
 
 
     // Encode read
-    if(*write_buffer_index % write_buffer_read_entry_length != 0) {
-        *write_buffer_index += write_buffer_read_entry_length - (*write_buffer_index % write_buffer_read_entry_length);
+
+    int ar_index = 0;
+    if(run_fpga == 1){
+        if(*write_buffer_index % write_buffer_read_entry_length != 0) {
+            *write_buffer_index += write_buffer_read_entry_length - (*write_buffer_index % write_buffer_read_entry_length);
+            if(*write_buffer_index != 0 && *write_buffer_index % max_write_buffer_index == 0){
+                int mul = (*write_buffer_index / max_write_buffer_index) + 1;
+                *write_buffer = (uint8_t*)realloc(*write_buffer,mul*write_buffer_capacity);
+                memset(*write_buffer + *write_buffer_index,0,write_buffer_capacity);
+                *write_buffer_size = mul*write_buffer_capacity;
+            }
+        }
+
+        encode_read_data(seq, l_seq, read_id, *write_buffer + *write_buffer_index);
+
+        *write_buffer_index += write_buffer_read_entry_length;
+
         if(*write_buffer_index != 0 && *write_buffer_index % max_write_buffer_index == 0){
             int mul = (*write_buffer_index / max_write_buffer_index) + 1;
             *write_buffer = (uint8_t*)realloc(*write_buffer,mul*write_buffer_capacity);
@@ -1761,19 +1776,6 @@ void seed_extension(const mem_opt_t *opt, const bwt_t *bwt, const bntseq_t *bns,
             *write_buffer_size = mul*write_buffer_capacity;
         }
     }
-
-    encode_read_data(seq, l_seq, read_id, *write_buffer + *write_buffer_index);
-
-    int ar_index = 0;
-    *write_buffer_index += write_buffer_read_entry_length;
-
-    if(*write_buffer_index != 0 && *write_buffer_index % max_write_buffer_index == 0){
-        int mul = (*write_buffer_index / max_write_buffer_index) + 1;
-        *write_buffer = (uint8_t*)realloc(*write_buffer,mul*write_buffer_capacity);
-        memset(*write_buffer + *write_buffer_index,0,write_buffer_capacity);
-        *write_buffer_size = mul*write_buffer_capacity;
-    }
-
 
     int i = 0;
 	for (i = 0; i < chn->n; ++i) {
@@ -1783,7 +1785,7 @@ void seed_extension(const mem_opt_t *opt, const bwt_t *bwt, const bntseq_t *bns,
         int64_t rmax1 = 0;
 
         fetch_rmaxs(opt, bns,pac, l_seq, (uint8_t*) seq, p, regs, &rmax0, &rmax1);
-        if((rmax1 - rmax0) > 250){
+        if((rmax1 - rmax0) > 250 || run_fpga == 0){
             // Max allowed ref length
             mem_chain2aln(opt, bns, pac, l_seq, (uint8_t*)seq, p, regs,rmax0,rmax1);
         }
@@ -2378,10 +2380,13 @@ static void fpga_worker(void *data){
     size_t allzeros_size = 0;
     uint8_t* load_buffer;
     size_t load_buffer_size;
+    int time_out = 0;
+    struct timespec start,end;
+    uint64_t timediff;
+    
+    
 
-
-
-
+    
 
 
     fpga_data_out_v f1v;
@@ -2412,6 +2417,8 @@ static void fpga_worker(void *data){
         fpga_mem_write_offset = 0;
        
         if(last_entry == 0){
+            
+            time_out = 0;
 
             load_buffer = (uint8_t *) malloc(write_buffer_capacity);
             memset(load_buffer,0,write_buffer_capacity);
@@ -2425,20 +2432,19 @@ static void fpga_worker(void *data){
 
             for(i = 0;i<qe->num;i++){
                 f1.fpga_entry_present = 0;
-                seed_extension(w->opt, w->bwt, w->bns, w->pac, qe->seqs[i]->l_seq, qe->seqs[i]->seq, qe->chains[i], &qe->regs[i], &f1, &load_buffer, &load_buffer_size, &load_buffer_index, qe->seqs[i]->read_id);
+                seed_extension(w->opt, w->bwt, w->bns, w->pac, qe->seqs[i]->l_seq, qe->seqs[i]->seq, qe->chains[i], &qe->regs[i], &f1, &load_buffer, &load_buffer_size, &load_buffer_index, qe->seqs[i]->read_id, 1);
 
                 f1v.a[i].fpga_entry_present = f1.fpga_entry_present;
                 if(f1.fpga_entry_present){
                   f1v.n++;
                 }
-                free(qe->chains[i]);
+                // Dont free chains yet
+                //free(qe->chains[i]);
             }
 
-            //fprintf(stderr,"Starting : %ld, Size : %zd\n",qe->starting_read_id, load_buffer_size);
-            //fprintf(stderr,"Load buffer size : %zd, n : %d\n",qe->load_buffer_size,qe->fpga_results->n);
             //fflush(stdout);
 
-            
+
             if(f1v.n != 0){
                 load_buffer = (uint8_t *)realloc(load_buffer,load_buffer_size + write_buffer_capacity);
                 memset(load_buffer + load_buffer_size,0,write_buffer_capacity);
@@ -2446,17 +2452,41 @@ static void fpga_worker(void *data){
 
                 vdip = 0x0001;
                 rc = fpga_mgmt_set_vDIP(0,vdip);
+                clock_gettime(CLOCK_THREAD_CPUTIME_ID, &start);         
                 while(1) {
                     rc = fpga_mgmt_get_vLED_status(0,&vled);
                     if((vled & 0x0001) == 0)  {
                         break;
                     }
+                    clock_gettime(CLOCK_THREAD_CPUTIME_ID, &end);         
+                    timediff = (end.tv_nsec - start.tv_nsec) * 1000000000 + (end.tv_sec - start.tv_sec);
+                    if(timediff > TIMEOUT){
+                        fprintf(stderr,"Going into timeout mode\n");
+                        fprintf(stderr,"Starting : %ld, Size : %zd\n",qe->starting_read_id, load_buffer_size);
+                        vdip = 0x0002;
+                        rc = fpga_mgmt_set_vDIP(0,vdip);
+                        vdip = 0x0000;
+                        rc = fpga_mgmt_set_vDIP(0,vdip);
+                        break;
+                        time_out = 1;
+                    }
                 }
-
-                read_from_fpga(bw_pci_bar_handle,qe,&f1v,3);
-                vdip = 0x0000;
-                rc = fpga_mgmt_set_vDIP(0,vdip);
+            
+                if(time_out == 0){
+                    read_from_fpga(bw_pci_bar_handle,qe,&f1v,3);
+                    vdip = 0x0000;
+                    rc = fpga_mgmt_set_vDIP(0,vdip);
+                }
             }
+
+            for(i = 0;i<qe->num;i++){
+                if(time_out == 1){
+                    seed_extension(w->opt, w->bwt, w->bns, w->pac, qe->seqs[i]->l_seq, qe->seqs[i]->seq, qe->chains[i], &qe->regs[i], &f1, &load_buffer, &load_buffer_size, &load_buffer_index, qe->seqs[i]->read_id, 0);
+                }
+                // Dont free chains yet
+                free(qe->chains[i]);
+            }
+            
             
 
             free(f1v.a);
