@@ -39,6 +39,8 @@ typedef struct {
     uint8_t correction;         // Correction applied on cigar. To get sam mapping position from this, add correction to abs_pos
     uint8_t is_rev;
     uint8_t avg_qual;
+    uint16_t mate_diff;
+    uint16_t flags;
     char *name, *comment, *seq, *qual, *sam;
 } bseq1s_t;
 

@@ -5,12 +5,18 @@ typedef struct {
     uint8_t file_ptr[5];
     int16_t sam_size;
     uint8_t correction; 
-    uint8_t avg_qual; 
+    uint8_t avg_qual;
+
+    // Bit 0 : Is duplicate or not
+    // Bit 1 : Is properly paired or not
+    uint8_t flags;
+    uint16_t mate_diff;
 } sort_info;
 
 typedef struct {
     uint8_t avg_qual;
     uint8_t correction;
+    uint16_t mate_diff;
 } md_info;
 
 
@@ -29,6 +35,7 @@ typedef struct {
 typedef struct {
     md_info mdi;
     int64_t ref_pos;    // Corrected with CIGAR
+    uint8_t is_rev;
 } md_ot_entry;
 
 
