@@ -1,9 +1,8 @@
 #include "bwa.h"
-
+#include "pc_queue.h"
 
 typedef struct {
-    uint8_t file_ptr[5];
-    int16_t sam_size;
+    uint32_t read_id;
     uint8_t correction; 
     uint8_t avg_qual;
 
@@ -31,19 +30,38 @@ typedef struct {
     half_mt_entry re;
 } mt_entry;
 
-
 typedef struct {
     md_info mdi;
     int64_t ref_pos;    // Corrected with CIGAR
     uint8_t is_rev;
 } md_ot_entry;
 
-
 typedef struct {
     sort_info si;
     int64_t ref_pos;    // Not corrected with CIGAR            
     uint8_t is_rev;
 } sort_ot_entry;
+
+typedef struct {
+    mt_entry * mt;
+    int64_t mt_length;
+
+    sort_ot_entry ** sort_ot;
+    int sort_ot_size;
+    int sort_ot_length;
+
+    md_ot_entry ** md_ot;
+    int md_ot_size;
+    int md_ot_length;
+} sort_struct_t;
+
+typedef struct {
+    int thread_id;
+    int64_t length;
+    double time;
+    int64_t num_reads;
+    queue * q;
+} sort_slave_t;
 
 void sorting_init(int64_t l_pac);
 void sorting_close();
