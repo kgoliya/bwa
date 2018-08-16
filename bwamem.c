@@ -2469,8 +2469,10 @@ static void fpga_worker(void *data){
                     clock_gettime(CLOCK_THREAD_CPUTIME_ID, &end);         
                     timediff = (end.tv_nsec - start.tv_nsec) * 1000000000 + (end.tv_sec - start.tv_sec);
                     if(timediff > TIMEOUT){
-                        fprintf(stderr,"Going into timeout mode\n");
-                        fprintf(stderr,"Starting : %ld, Size : %zd\n",qe->starting_read_id, load_buffer_size);
+                        if(bwa_verbose >= 10){
+                            fprintf(stderr,"Going into timeout mode\n");
+                            fprintf(stderr,"Starting : %ld, Size : %zd\n",qe->starting_read_id, load_buffer_size);
+                        }
                         vdip = 0x0002;
                         rc = fpga_mgmt_set_vDIP(0,vdip);
                         vdip = 0x0000;
