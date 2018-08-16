@@ -222,8 +222,8 @@ void bns_destroy(bntseq_t *bns)
 }
 
 //Old definition
-//#define _set_pac(pac, l, c) ((pac)[(l)>>2] |= (c)<<((~(l)&3)<<1))
-//#define _get_pac(pac, l) ((pac)[(l)>>2]>>((~(l)&3)<<1)&3)
+//#define _set_pac(pac, l, c) ((pac)[(l)>>2] |= (c)<<(((l)&3)<<1))
+//#define _get_pac(pac, l) ((pac)[(l)>>2]>>(((l)&3)<<1)&3)
 
 //New Definition
 #define _set_pac(pac, l, c) ((pac)[(l)>>2] |= (c)<<(((l)&3)<<1))

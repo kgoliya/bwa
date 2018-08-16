@@ -1792,9 +1792,9 @@ void seed_extension(const mem_opt_t *opt, const bwt_t *bwt, const bntseq_t *bns,
         else{
             mem_chain2aln_to_fpga(opt, bns, pac, l_seq, (uint8_t*)seq, p, regs,rmax0,rmax1, data_out, write_buffer, write_buffer_size,write_buffer_index,&ar_index);
         }
-		free(chn->a[i].seeds);
+		//free(chn->a[i].seeds);
 	}
-	free(chn->a);
+	//free(chn->a);
 	regs->n = mem_sort_dedup_patch(opt, bns, pac, (uint8_t*)seq, regs->n, regs->a);
 
 	if (bwa_verbose >= 4) {
@@ -2365,6 +2365,14 @@ void worker1_MT(void *data){
     pthread_exit(0);
 }
 
+void free_chains(mem_chain_v * chn){
+    int i = 0;
+    for(i=0;i<chn->n;i++){
+        free(chn->a[i].seeds);
+    }
+    free(chn->a);
+    free(chn);
+}
 
 static void fpga_worker(void *data){
     queue_coll *qc = (queue_coll *)data;
@@ -2467,8 +2475,8 @@ static void fpga_worker(void *data){
                         rc = fpga_mgmt_set_vDIP(0,vdip);
                         vdip = 0x0000;
                         rc = fpga_mgmt_set_vDIP(0,vdip);
-                        break;
                         time_out = 1;
+                        break;
                     }
                 }
             
@@ -2483,8 +2491,9 @@ static void fpga_worker(void *data){
                 if(time_out == 1){
                     seed_extension(w->opt, w->bwt, w->bns, w->pac, qe->seqs[i]->l_seq, qe->seqs[i]->seq, qe->chains[i], &qe->regs[i], &f1, &load_buffer, &load_buffer_size, &load_buffer_index, qe->seqs[i]->read_id, 0);
                 }
-                // Dont free chains yet
-                free(qe->chains[i]);
+
+                // Free chains now
+                free_chains(qe->chains[i]);
             }
             
             
