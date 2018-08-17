@@ -53,94 +53,71 @@ void struct_init(sort_struct_t * sld, int64_t length){
     sld->sort_ot_size = INIT_OVERFLOW_TABLE_SIZE;
     sld->sort_ot_length = 0;
 
-    sld->md_ot_size = INIT_OVERFLOW_TABLE_SIZE;
-    sld->md_ot_length = 0;
-
-
     sld->mt = (mt_entry * ) malloc(length * sizeof(mt_entry));
     memset(sld->mt,0,(length * sizeof(mt_entry)));
     
-    sld->sort_ot = (sort_ot_entry ** ) malloc(INIT_OVERFLOW_TABLE_SIZE * sizeof(sort_ot_entry *));
-    memset(sld->sort_ot,0,(INIT_OVERFLOW_TABLE_SIZE * sizeof(sort_ot_entry *)));
+    sld->sort_ot = (ot_entry ** ) malloc(INIT_OVERFLOW_TABLE_SIZE * sizeof(ot_entry *));
+    memset(sld->sort_ot,0,(INIT_OVERFLOW_TABLE_SIZE * sizeof(ot_entry *)));
 
-    sld->md_ot = (md_ot_entry ** ) malloc(INIT_OVERFLOW_TABLE_SIZE * sizeof(md_ot_entry *));
-    memset(sld->md_ot,0,(INIT_OVERFLOW_TABLE_SIZE * sizeof(md_ot_entry *)));
 }
 
 void struct_delete(sort_struct_t * sld){
 
     free(sld->mt);
     int i = 0;
-    for(i = sld->md_ot_length-1;i>=0;i--){
-        free(sld->md_ot[i]);
-    }
     for(i = sld->sort_ot_length-1;i>=0;i--){
         free(sld->sort_ot[i]);
     }
-    free(sld->md_ot);
     free(sld->sort_ot);
+}
+
+
+void write_entry(bseq1s_t * seq, half_mt_entry * in_en){
+    in_en->read_id = seq->read_id;
+    in_en->correction = seq->correction;
+    in_en->avg_qual = seq->avg_qual;
+    in_en->flags = seq->flags;
+    in_en->mate_diff = seq->mate_diff;
+    return;
+}
+
+void copy_entry(half_mt_entry * src_en, half_mt_entry * dest_en){
+    dest_en->read_id = src_en->read_id;
+    dest_en->correction = src_en->correction;
+    dest_en->avg_qual = src_en->avg_qual;
+    dest_en->flags = src_en->flags;
+    dest_en->mate_diff = src_en->mate_diff;
+    return; 
 }
 
 void add_sort_ot_entry(bseq1s_t * seq,sort_struct_t * sld){
 
     if(sld->sort_ot_length != 0 && sld->sort_ot_length % sld->sort_ot_size == 0){
-        sld->sort_ot = realloc(sld->sort_ot,(sld->sort_ot_length + sld->sort_ot_size) * sizeof(sort_ot_entry *));
+        sld->sort_ot = realloc(sld->sort_ot,(sld->sort_ot_length + sld->sort_ot_size) * sizeof(ot_entry *));
     }
    
     int index = sld->sort_ot_length;
 
-    sld->sort_ot[index] = (sort_ot_entry * ) malloc(sizeof(sort_ot_entry));
+    sld->sort_ot[index] = (ot_entry * ) malloc(sizeof(ot_entry));
     sld->sort_ot[index]->ref_pos = seq->abs_pos;
-    sld->sort_ot[index]->is_rev = seq->is_rev;
 
-    sld->sort_ot[index]->si.read_id = seq->read_id;
-    sld->sort_ot[index]->si.correction = seq->correction;
-    sld->sort_ot[index]->si.avg_qual = seq->avg_qual;
-    sld->sort_ot[index]->si.flags = seq->flags;
-    sld->sort_ot[index]->si.mate_diff = seq->mate_diff;
+    write_entry(seq,&sld->sort_ot[index]->ote);
     sld->sort_ot_length++;
 }
 
-
-void add_md_ot_entry(bseq1s_t * seq, half_mt_entry * md_en, sort_struct_t * sld){
-
-
-    // Md_en is not empty when it enters this method
-    // Check if the mate_diff is the same in the seq and md_en
-
-
-    if(md_en->mdi.mate_diff == seq->mate_diff){
-        // The inputs are truly duplicates
-        if(md_en->mdi.avg_qual >= seq->avg_qual){
-            // Seq is the duplicates
-            // Do nothing
-        }
-        else{
-            // md_en is the duplicate
-            md_en->mdi.avg_qual = seq->avg_qual;
-            md_en->mdi.correction = seq->correction;
-            md_en->mdi.mate_diff = seq->mate_diff;
-        }
+void add_sort_ot_entry_from_mt(int64_t ref_pos,half_mt_entry * in_en, sort_struct_t * sld){
+    if(sld->sort_ot_length != 0 && sld->sort_ot_length % sld->sort_ot_size == 0){
+        sld->sort_ot = realloc(sld->sort_ot,(sld->sort_ot_length + sld->sort_ot_size) * sizeof(ot_entry *));
     }
-    else {
-        // None of the entries are duplicates and add seq to the ot
-        if(sld->md_ot_length != 0 && sld->md_ot_length % sld->md_ot_size == 0){
-            sld->md_ot = realloc(sld->md_ot,(sld->md_ot_length + sld->md_ot_size) * sizeof(md_ot_entry *));
-        }
+   
+    int index = sld->sort_ot_length;
 
-        md_ot_entry ** tmp_md_ot = sld->md_ot;
-        int index = sld->md_ot_length;
-
-        tmp_md_ot[index] = (md_ot_entry * ) malloc(sizeof(md_ot_entry));
-        tmp_md_ot[index]->ref_pos = seq->abs_pos - seq->correction;
-        tmp_md_ot[index]->is_rev = seq->is_rev;
-        tmp_md_ot[index]->mdi.avg_qual = seq->avg_qual;
-        tmp_md_ot[index]->mdi.correction = seq->correction;
-        tmp_md_ot[index]->mdi.mate_diff = seq->mate_diff;
-        sld->md_ot_length++;
-    }
-
-    return;
+    sld->sort_ot[index] = (ot_entry * ) malloc(sizeof(ot_entry));
+    sld->sort_ot[index]->ref_pos = ref_pos;
+    
+    copy_entry(in_en, &sld->sort_ot[index]->ote);
+    
+    sld->sort_ot_length++;
 }
 
 
@@ -148,41 +125,79 @@ void add_mt_entry_1(bseq1s_t *seq, sort_struct_t * sld){
 
 
     half_mt_entry * sort_en;
-    half_mt_entry * md_en;
-    assert(seq->abs_pos - seq->correction >= 0);
+    if(sort_verbose >= 10){
+        fprintf(stderr,"Ref pos : %ld\n",seq->abs_pos);
+        fprintf(stderr,"Flags : %d\n",seq->flags);
+        fprintf(stderr,"Mate pos : %d\n",seq->mate_diff);
+    }
     if(seq->is_rev){
         sort_en = &sld->mt[seq->abs_pos].re;
-        md_en = &sld->mt[seq->abs_pos - seq->correction].re;
     }
     else {
         sort_en = &sld->mt[seq->abs_pos].fe;
-        md_en = &sld->mt[seq->abs_pos - seq->correction].fe;
     }
 
-    if(sort_en->si.read_id == 0){
+    if(sort_en->flags == 0 && ((seq->flags & 0x100) == 0)){
         //Sort entry was free
-        sort_en->si.read_id = seq->read_id;
-        sort_en->si.correction = seq->correction;
-        sort_en->si.avg_qual = seq->avg_qual;
-        sort_en->si.flags = seq->flags;
-        sort_en->si.mate_diff = seq->mate_diff;
+        write_entry(seq,sort_en);
+    }
+    else if((seq->flags & 0x100) != 0){
+        add_sort_ot_entry(seq,sld);
     }
     else{
         // Add entry to Sort Overflow Table
-        add_sort_ot_entry(seq,sld);
-    }
-
-    if(md_en->mdi.avg_qual == 0){
-        // MD entry was free
-        md_en->mdi.avg_qual = seq->avg_qual;
-        md_en->mdi.correction = seq->correction;
-        md_en->mdi.mate_diff = seq->mate_diff;
-    }
-    else{
-        // Add entry to MarkDuplicate Overflow Table
-        // TODO: Add checking mate information for pair ended reads
-
-        add_md_ot_entry(seq, md_en, sld);
+        // Check if both the entries are properly paired
+        if(((sort_en->flags & 0x02) != 0) && ((seq->flags & 0x02) != 0)){
+            // Both entries are properly paired
+            if(sort_en->mate_diff == seq->mate_diff){
+                if(sort_en->avg_qual < seq->avg_qual){
+                    sort_en->flags |= 0x400;            // Duplicate marked
+                    sort_en->flags |= 0x8000;           // Entry processed
+                    add_sort_ot_entry_from_mt(seq->abs_pos,sort_en, sld);
+                    write_entry(seq,sort_en);
+                }
+                else{
+                    // Seq is the duplicate entry
+                    seq->flags |= 0x400;
+                    seq->flags |= 0x8000;
+                    add_sort_ot_entry(seq,sld);
+                }
+            }
+            else{
+                add_sort_ot_entry(seq,sld);
+            }
+        }
+        else if(((sort_en->flags & 0x02) == 0) && ((seq->flags & 0x02) != 0)){
+            // If sort_en is not properly paired and seq is properly paired
+            // Put sort_en in overflow table
+            if(sort_en->avg_qual <= seq->avg_qual){
+                sort_en->flags |= 0x400; 
+                sort_en->flags |= 0x8000;
+            }
+            add_sort_ot_entry_from_mt(seq->abs_pos,sort_en, sld);
+            write_entry(seq,sort_en);
+        }
+        else if(((seq->flags & 0x02) == 0) && ((sort_en->flags & 0x02) != 0)){
+             if(seq->avg_qual <= sort_en->avg_qual){
+                 seq->flags |= 0x400;
+                 seq->flags |= 0x8000;
+             }
+             add_sort_ot_entry(seq,sld);
+        }
+        else{
+            // Both are not properly paired
+            if(seq->avg_qual <= sort_en->avg_qual){
+                 seq->flags |= 0x400;
+                 seq->flags |= 0x8000;
+                 add_sort_ot_entry(seq,sld);
+            }
+            else{
+                sort_en->flags |= 0x400;            // Duplicate marked
+                sort_en->flags |= 0x8000;           // Entry processed
+                add_sort_ot_entry_from_mt(seq->abs_pos,sort_en, sld);
+                write_entry(seq,sort_en);
+            }
+        }
     }
     return;
 }
@@ -211,148 +226,31 @@ void process_sam_record_1(bseq1s_t *seq, sort_struct_t * sld){
 
 int sort_ot_comparator(const void **p, const void **q) 
 {
-    sort_ot_entry* l = *((sort_ot_entry **)p);
-    sort_ot_entry* r = *((sort_ot_entry **)q); 
+    ot_entry* l = *((ot_entry **)p);
+    ot_entry* r = *((ot_entry **)q); 
     
     if(l->ref_pos < r->ref_pos){
         return -1;
     }
-    else{
-        return 1;
-    }
-}
-
-int md_ot_comparator(const void **p, const void **q) 
-{
-    md_ot_entry* l = *((md_ot_entry **)p);
-    md_ot_entry* r = *((md_ot_entry **)q); 
-    
-    if(l->ref_pos < r->ref_pos){
-        return -1;
-    }
-    else{
-        return 1;
-    }
-}
-
-
-int is_duplicate(sort_info * sort_in, md_info * md_in){
-
-    if(sort_in->read_id == 0 || md_in->avg_qual == 0){
-        return 0;
-    }
-    if((sort_in->flags & 0x02) != 0){
-        // Properly paired, check mate as well
-        if(sort_in->mate_diff == md_in->mate_diff){
-            // Could be the same read or a different read
-
-            if(sort_in->correction == md_in->correction && sort_in->avg_qual == md_in->avg_qual){
-                // Same read
-                return 0;
-            }
-            else{
-                return 1;
-            }
-
-        }
-        else{
-            return 0;
-        }
-    }
-    else{
-        // Not properly paired, only check correction and avg_qual scores
-        if(sort_in->correction == md_in->correction && sort_in->avg_qual == md_in->avg_qual){
-            // Same read
-            return 0;
-        }
-        else{
+    else if(l->ref_pos == r->ref_pos){
+        if((((l->ote.flags & 0x100) != 0) || ((l->ote.flags & 0x400) != 0)) && ((r->ote.flags & 0x100) == 0) && ((r->ote.flags & 0x400) == 0)){
+            // r should go before l
             return 1;
         }
-
-    }
-}
-
-int check_duplicate(sort_info * sort_in, int64_t md_in_ref_pos, int64_t md_ot_index, int is_rev, sort_struct_t * sld){
-    //assert(md_ot_index >= 0 && md_ot_index < md_ot_length);
-
-
-    // Check main table entry first
-
-    int64_t mt_ref_pos = md_in_ref_pos + sort_in->correction;
-    if(sort_verbose >= 5){
-        fprintf(stderr,"\t\tMt_ref_pos : %ld, md_ot_index : %ld\n",mt_ref_pos,md_ot_index);
-    }
-    int is_dup = 0;
-    if(is_rev){
-        is_dup = is_duplicate(sort_in, &sld->mt[mt_ref_pos].re.mdi);
-    }
-    else{
-        is_dup = is_duplicate(sort_in, &sld->mt[mt_ref_pos].fe.mdi);
-    }
-
-    if(is_dup){
-        return 1;
-    }
-
-    if(md_ot_index < sld->md_ot_length){
-        int64_t head_ref_pos = sld->md_ot[md_ot_index]->ref_pos;
-        if(sort_verbose >= 5){
-            fprintf(stderr,"\t\tmd_in_ref_pos : %ld\n",md_in_ref_pos);
-        }
-        while(head_ref_pos <= md_in_ref_pos){
-            if(sort_verbose >= 5){
-                fprintf(stderr,"\t\t\tHead ref_pos : %ld\n",head_ref_pos);
-            }
-            if(head_ref_pos == md_in_ref_pos && is_rev == sld->md_ot[md_ot_index]->is_rev){
-                is_dup = is_duplicate(sort_in, &sld->md_ot[md_ot_index]->mdi);
-                if(is_dup){
-                    return 1;
-                }
-            }
-            md_ot_index++;
-            if(md_ot_index >= sld->md_ot_length){
-                return 0;
-            }
-            head_ref_pos = sld->md_ot[md_ot_index]->ref_pos;
-        }
-    }
-    return 0;
-}
-
-void check_md_ot_head(int64_t * md_ot_head, int64_t main_ref_pos, sort_struct_t * sld){
-            char in_str[2];
-
-    if(sld->md_ot_length == 0 || *md_ot_head >= sld->md_ot_length){
-        return;
-    }
-    if((main_ref_pos - sld->md_ot[*md_ot_head]->ref_pos < 0)){
-        return;
-    }
-    while(main_ref_pos - sld->md_ot[*md_ot_head]->ref_pos > 101){
-        *md_ot_head += 1;
-        if(*md_ot_head >= sld->md_ot_length){
-            if(sort_verbose >= 5){
-                fprintf(stderr,"main_ref_pos : %ld, md_ot_head : %ld\n",main_ref_pos, *md_ot_head);
-                fprintf(stderr,"Breaking out now\n");
-                scanf("%1s",in_str);
-            }
-            *md_ot_head = sld->md_ot_length;
-            break;
+        else if((((r->ote.flags & 0x100) != 0) || ((r->ote.flags & 0x400) != 0)) && ((l->ote.flags & 0x100) == 0) && ((l->ote.flags & 0x400) == 0)){
+            // l should go before r
+            return -1;
         }
         else{
-            if(sort_verbose >= 5){
-                fprintf(stderr,"main_ref_pos : %ld, md_ot_head : %ld, ref_pos : %ld\n",main_ref_pos, *md_ot_head, sld->md_ot[*md_ot_head]->ref_pos);
-                scanf("%1s",in_str);
-            }
+            return 0;
         }
     }
-
-    if(*md_ot_head >= sld->md_ot_length){
-        // Do not allow md_ot_head to go beyond md_ot_length
-        *md_ot_head = sld->md_ot_length;
+    else{
+        return 1;
     }
-    return;
 }
+
+
 
 void usage(){
     printf("./bwa sort -I <input sam> -O <output sam> -v <verbose level> \n");
@@ -542,9 +440,6 @@ bseq1s_t * get_sam_record(char * line, size_t line_size,uint32_t read_id){
     // TODO create the table
 
 
-    if(sort_verbose >= 10){
-        fprintf(stderr,"flags : %d, chr_num : %d, pos : %ld, corr : %d, mate_diff : %d\n",flags,chr_num,pos,correction, mate_diff);
-    }
     if(pos == -1 || chr_num == -1){
         return NULL;
     }
@@ -552,7 +447,7 @@ bseq1s_t * get_sam_record(char * line, size_t line_size,uint32_t read_id){
     bseq1s_t * seq = (bseq1s_t *)malloc(sizeof(bseq1s_t));
     seq->read_id = read_id;
     seq->chr_num = chr_num;
-    seq->abs_pos = pos;
+    seq->abs_pos = pos - correction;
     seq->mate_diff = mate_diff;
     seq->correction = correction;
     seq->is_rev = (flags & 0x10) != 0 ? 1 : 0;
@@ -600,79 +495,196 @@ int get_sequences(FILE * temp_unsorted_file,int64_t ** chr_start_array){
 void sort_ots(sort_struct_t * sld){
     // Sort the sort_ot 
     if(sld->sort_ot_length > 0){
-        qsort(sld->sort_ot,sld->sort_ot_length,sizeof(sort_ot_entry *),sort_ot_comparator);
+        qsort(sld->sort_ot,sld->sort_ot_length,sizeof(ot_entry *),sort_ot_comparator);
     }
 
-    // Sort the md_ot 
-    if(sld->md_ot_length > 0){
-        qsort(sld->md_ot,sld->md_ot_length,sizeof(md_ot_entry *),md_ot_comparator);
+    return;
+}
+
+
+
+
+// 0 : No decision taken
+// 1 : en1 is duplicate
+// -1 : en2 is duplicate
+int is_duplicate(half_mt_entry * en1, half_mt_entry * en2){
+   
+    if(((en1->flags & 0x400) != 0) || ((en2->flags & 0x400) != 0) || ((en1->flags & 0x100) != 0) || ((en1->flags & 0x100) != 0)){
+        // either entry is a duplicate or a secondary alignment
+        return 0;
+    }
+    if((en1->flags & 0x10) == (en2->flags & 0x10)){
+        // Both entries have the same orientation
+
+        if((en1->flags & 0x02) == 0){
+            // Not properly paired
+            if(en1->avg_qual <= en2->avg_qual){
+                return 1;
+            }
+            else{
+                if((en2->flags & 0x02) == 0){
+                    // if en2 is also not paired properly
+                    return -1;
+                }
+            }
+        }
+        else{
+            if((en2->flags & 0x02) != 0){
+                if(en1->mate_diff == en2->mate_diff){
+                    if(en1->avg_qual <= en2->avg_qual){
+                        return 1;
+                    }
+                    else{
+                        return -1;
+                    }
+                }
+            }
+        }
+    }
+    return 0;
+
+}
+
+
+
+void check_for_duplicates(int64_t ref_pos,half_mt_entry * in_en, int64_t md_head, sort_struct_t * sld, int *num_duplicates){
+    assert (in_en != NULL);
+    if(md_head >= sld->sort_ot_length || ((in_en->flags & 0x8000) != 0) || ((in_en->flags & 0x100) != 0)){
+        // Ignore input if input has been processed already or its a secondary alignment
+        if((in_en->flags & 0x400) != 0){
+            *num_duplicates = *num_duplicates + 1;
+        }
+        return;
+    }
+    int dup = 0;
+    while(sld->sort_ot[md_head]->ref_pos <= ref_pos){
+        if(sld->sort_ot[md_head]->ref_pos == ref_pos){
+            // The entry has the same ref pos
+            if(((sld->sort_ot[md_head]->ote.flags & 0x100) != 0) || ((sld->sort_ot[md_head]->ote.flags & 0x400) != 0)){
+                break;
+            }
+            if(sld->sort_ot[md_head]->ote.read_id != in_en->read_id){
+                // Not the same read
+                dup = is_duplicate(in_en,&sld->sort_ot[md_head]->ote);
+                if(dup == 1){
+                    in_en->flags |= 0x400;
+                    *num_duplicates = *num_duplicates + 1;
+                    break;
+                }
+                else if(dup == -1){
+                    *num_duplicates = *num_duplicates + 1;
+                    sld->sort_ot[md_head]->ote.flags |= 0x400;
+                    sld->sort_ot[md_head]->ote.flags |= 0x8000;
+                }
+            }
+        }
+        md_head++;
+        if(md_head >= sld->sort_ot_length){
+            break;
+        }
+    }
+
+    in_en->flags |= 0x8000;
+    return;
+}
+
+/*
+void mark_duplicate_mt_entry(int64_t ref_pos,int64_t md_head,half_mt_entry * in_en, sort_struct_t * sld, int check_for_duplicate){
+    int64_t i = 0;
+    int64_t ref_pos_without_corr = (ref_pos + in_en->correction);
+    half_mt_entry * single_en;
+    int64_t single_en_uncorr_ref_pos = 0;
+    assert(ref_pos_without_corr < sld->mt_length);
+    int64_t tmp_md_head = md_head;
+   
+    if(in_en->read_id == 0 || ((in_en->flags & 0x8000) != 0)){
+        // If in_en is invalid or it has already been seen before
+        return;
+    }
+
+    for(i = ref_pos+1;i<ref_pos_without_corr;i++){
+        if(md_head < sld->sort_ot_length){
+            // Get entry in the overflow table
+            single_en = &sld->sort_ot[md_head]->ote;
+            single_en_uncorr_ref_pos = sld->sort_ot[md_head]->ref_pos + single_en->correction;
+
+            while(ref_pos_without_corr > single_en_uncorr_ref_pos){
+                // The entry in the overflow table has a sort position smaller 
+                // the current entry under consideration
+                mark_duplicate_mt_entry(sld->sort_ot[md_head]->ref_pos, md_head, single_en, sld,1);
+                md_head++;
+                if(md_head < sld->sort_ot_length){
+                    single_en = &sld->sort_ot[md_head]->ote;
+                    single_en_uncorr_ref_pos = sld->sort_ot[md_head]->ref_pos + single_en->correction;
+                }
+                else{
+                    break;
+                }
+            }
+        }
+        mark_duplicate_mt_entry(sld->sort_ot[md_head]->ref_pos, md_head, single_en, sld, 0);
+    }
+    if(check_for_duplicate != 0){
+        check_for_duplicates(ref_pos,in_en, tmp_md_head,sld);
     }
     return;
 }
 
-int mark_duplicates(sort_struct_t * sld){
-    int64_t i = 0;
-    int64_t head_sort_ot = 0;
-    int64_t head_md_ot = 0;
-    int64_t md_index = 0;
-    int count_duplicates = 0; 
-    for(i = 0;i<sld->mt_length;i++){
+*/
+
+void update_ot_head(int64_t * ot_head, int64_t current_ref,sort_struct_t * sld){
+    if(sld->sort_ot_length == 0 || sld->sort_ot_length <= *ot_head){
         
-            char in_str[2];
-        // i is the head of the main table
-        // Check the head of the sort_ot and the head of the main table
-        // Select one entry from (merge sort of sorts)
+        // If sort_ot_length is zero or the head is already past the full table
+        // do nothing
+        return;
+    }
 
-        /*if(head_sort_ot < sld->sort_ot_length){
-            while (sld->sort_ot[head_sort_ot]->ref_pos < i){
-                md_index = sld->sort_ot[head_sort_ot]->ref_pos - sld->sort_ot[head_sort_ot]->si.correction;
-                if(sld->sort_ot[head_sort_ot]->is_rev){
-                        check_md_ot_head(&head_md_ot, sld->sort_ot[head_sort_ot]->ref_pos, sld);
-                        count_duplicates += check_duplicate(&sld->sort_ot[head_sort_ot]->si, md_index, head_md_ot, 1, sld);
-                }
-                else{
-                        check_md_ot_head(&head_md_ot, sld->sort_ot[head_sort_ot]->ref_pos, sld);
-                        count_duplicates += check_duplicate(&sld->sort_ot[head_sort_ot]->si, md_index, head_md_ot, 0,sld);
-                }
+    if(current_ref < sld->sort_ot[*ot_head]->ref_pos){
+        
+        // If current ref positon is less than the ref pos
+        // at the head of the table, do nothing
+        return;
+    }
 
-                head_sort_ot++;
-                if(head_sort_ot >= sld->sort_ot_length){
-                    break;
-                }
-            }
-        }*/
-        check_md_ot_head(&head_md_ot, i,sld);
-        /*
-        if(sort_verbose >= 5){
-            fprintf(stderr,"\tMd_ot_head : %ld\n",head_md_ot);
-            fprintf(stderr,"\ti : %ld, Md_ot_head ref_pos: %ld\n",i,sld->md_ot[head_md_ot]->ref_pos);
-        }
-        */
-
-        if(sld->mt[i].fe.si.read_id != 0){
-            /*md_index = i - sld->mt[i].fe.si.correction;
-            if(sort_verbose >= 5){
-                fprintf(stderr,"\tForward md_index : %ld\n",md_index);
-            }
-            count_duplicates += check_duplicate(&sld->mt[i].fe.si, md_index, head_md_ot, 0,sld);*/
-            scanf("%1s",in_str);
-        }
-        if(sld->mt[i].re.si.read_id != 0){
-            /*md_index = i - sld->mt[i].re.si.correction;
-            if(sort_verbose >= 5){
-                fprintf(stderr,"\tReverse md_index : %ld\n",md_index);
-            }
-            count_duplicates += check_duplicate(&sld->mt[i].re.si, md_index, head_md_ot, 1,sld);*/
-            scanf("%1s",in_str);
+    while(current_ref > sld->sort_ot[*ot_head]->ref_pos){
+        *ot_head = *ot_head + 1;
+        if(*ot_head >= sld->sort_ot_length){
+            *ot_head = sld->sort_ot_length;
+            break;
         }
     }
-    return count_duplicates;
+    return;
+}
+
+
+void mark_duplicates(sort_struct_t * sld, int *num_duplicates){
+    int64_t i = 0;
+    int64_t md_head = 0;
+    int64_t prev_ref_pos = 0;
+
+    half_mt_entry * single_en;
+    for(i=0;i<sld->sort_ot_length;i++){
+
+        single_en = &sld->sort_ot[i]->ote;
+        if(prev_ref_pos != sld->sort_ot[i]->ref_pos){
+            md_head = i;
+            prev_ref_pos = sld->sort_ot[i]->ref_pos;
+        }
+
+        if(sort_verbose >= 5){
+            fprintf(stderr,"i : %ld,md_head : %ld, ref_pos : %ld\n",i,md_head,sld->sort_ot[md_head]->ref_pos);
+        }
+        check_for_duplicates(i,single_en, md_head, sld, num_duplicates);
+    }
+
+    return;
 }
 
 void sort_ST(void * data){
     struct timespec proc_start, proc_end;
     sort_slave_t * s = (sort_slave_t *) data;
-    s->time = 0.0;
+    s->write_time = 0.0;
     s->num_reads = 0;
     sort_struct_t * sld = (sort_struct_t *) malloc(sizeof(sort_struct_t));
 
@@ -681,6 +693,7 @@ void sort_ST(void * data){
     void ** queue_out = (void **) malloc(sizeof(void *)) ;
     bseq1s_t * seq;
 
+    // Write Portion
     while(1){
         getElement(q,queue_out); 
         seq = (bseq1s_t *) *queue_out;
@@ -695,17 +708,28 @@ void sort_ST(void * data){
             free(seq);
         }
         clock_gettime(CLOCK_THREAD_CPUTIME_ID,&proc_end);
-        s->time += (double)(proc_end.tv_sec - proc_start.tv_sec) + ((double)(proc_end.tv_nsec - proc_start.tv_nsec)/(double)(1000000000));
+        s->write_time += (double)(proc_end.tv_sec - proc_start.tv_sec) + ((double)(proc_end.tv_nsec - proc_start.tv_nsec)/(double)(1000000000));
         s->num_reads++;
     }
+    // Write Portion End
+
+    // Sorting the overflow table
+    clock_gettime(CLOCK_THREAD_CPUTIME_ID,&proc_start);
 
     sort_ots(sld);
-    if(sort_verbose >= 15){
-        fprintf(stderr,"md_ot_length : %d\n",sld->md_ot_length);
-    }
-    if(s->thread_id == 0){
-        mark_duplicates(sld);
-    }
+    
+    clock_gettime(CLOCK_THREAD_CPUTIME_ID,&proc_end);
+    s->sort_time = (double)(proc_end.tv_sec - proc_start.tv_sec) + ((double)(proc_end.tv_nsec - proc_start.tv_nsec)/(double)(1000000000));
+    // Sorting end
+
+    // Mark duplicates in the overflow table
+    clock_gettime(CLOCK_THREAD_CPUTIME_ID,&proc_start);
+    s->num_duplicates = 0;
+    mark_duplicates(sld,&s->num_duplicates);
+    clock_gettime(CLOCK_THREAD_CPUTIME_ID,&proc_end);
+    s->md_time = (double)(proc_end.tv_sec - proc_start.tv_sec) + ((double)(proc_end.tv_nsec - proc_start.tv_nsec)/(double)(1000000000));
+    
+    // Mark duplicates end
 
     struct_delete(sld);
     free(sld);
@@ -785,9 +809,14 @@ void sort_MT(FILE * in_sam, int num_threads){
         qs[i] = queueInit(QUEUE_SIZE);
         slaves[i].thread_id = i;
         slaves[i].length = lens[i];
-        slaves[i].q = qs[i];
-        slaves[i].time = 0;
+        slaves[i].num_duplicates = 0;
+
+        slaves[i].write_time = 0.0;
+        slaves[i].sort_time = 0.0;
+        slaves[i].md_time = 0.0;
         slaves[i].num_reads = 0;
+
+        slaves[i].q = qs[i];
         pthread_create(&pts[i],NULL,sort_ST,&slaves[i]);
     } 
 
@@ -808,12 +837,12 @@ void sort_MT(FILE * in_sam, int num_threads){
             s = get_sam_record(line, strlen(line), read_id);
             read_id++;
             if(s != NULL){
-                s->abs_pos += s->chr_num;
+                s->abs_pos += chr_len[s->chr_num - 1];
                 tid = chr_thread_id[s->chr_num - 1];
                 sending_queue = qs[tid];
                 addElement(sending_queue, (void *)s);
             }
-            if(sort_verbose >= 3 && read_id % 1000000 == 0){
+            if(sort_verbose >= 3 && read_id % 10000000 == 0){
                 clock_gettime(CLOCK_REALTIME,&read_end);
                 read_time = (double)(read_end.tv_sec - read_start.tv_sec) + ((double)(read_end.tv_nsec - read_start.tv_nsec)/(double)(1000000000));
                 fprintf(stderr,"Read %d reads in %f secs\n",read_id,read_time);
@@ -864,10 +893,20 @@ void sort_MT(FILE * in_sam, int num_threads){
     for(i=0;i<num_threads;i++){
         queueDelete(qs[i]);
     }
-    
-    for(i=0;i<num_threads;i++){
-        fprintf(stderr,"%ld Reads processed in tid %ld in %f secs\n",slaves[i].num_reads,i,slaves[i].time);
+    int total_duplicates = 0;
+    if(sort_verbose >= 3){
+        for(i=0;i<num_threads;i++){
+            fprintf(stderr,"For tid : %d\n",i+1);
+            fprintf(stderr,"\t%ld Reads processed in %f secs\n",slaves[i].num_reads,slaves[i].write_time);
+            fprintf(stderr,"\t%d Duplicates detected\n",slaves[i].num_duplicates);
+            total_duplicates += slaves[i].num_duplicates;
+
+            fprintf(stderr,"\tSorting time : %f\n",slaves[i].sort_time);
+            fprintf(stderr,"\tMark duplicates time : %f\n",slaves[i].md_time);
+        }
     }
+
+    fprintf(stderr,"Total duplicates detected : %d\n",total_duplicates);
 
     free(slaves);
     free(pts);
