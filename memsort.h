@@ -2,7 +2,8 @@
 #include "pc_queue.h"
 
 typedef struct {
-    uint32_t read_id;
+    uint8_t fileptr[5];
+    uint16_t sam_size;
     uint8_t correction; 
     uint8_t avg_qual;
 
@@ -11,6 +12,8 @@ typedef struct {
     // Bit 0 : Read paired (0x1)
     // Bit 4 : Is reverse (0x10)
     // Bit 15: Seen for mark duplicate processing(0x8000)
+    // Bit 14: Seen for generating sam(0x4000)
+    // Bit 13: valid(0x2000)
     uint16_t flags;
     
     uint16_t mate_diff;
@@ -41,12 +44,12 @@ typedef struct {
     int thread_id;
     int64_t length;
     int num_duplicates;
-
     double write_time;
     double sort_time;
     double md_time;
     int64_t num_reads;
 
+    sort_struct_t * sld;
     queue * q;
 } sort_slave_t;
 

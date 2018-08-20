@@ -32,7 +32,6 @@ KSEQ_DECLARE(gzFile)
 //FILE * fbin = NULL; 
 
 char * sorted_file_name;
-FILE * sorted_file;
 
 int sort_verbose = 0;
 
@@ -64,16 +63,24 @@ void struct_init(sort_struct_t * sld, int64_t length){
 void struct_delete(sort_struct_t * sld){
 
     free(sld->mt);
-    int i = 0;
+    int64_t i = 0;
     for(i = sld->sort_ot_length-1;i>=0;i--){
         free(sld->sort_ot[i]);
     }
     free(sld->sort_ot);
 }
 
+void copy_fileptr(uint8_t * src_fileptr, uint8_t * dest_fileptr){
+    dest_fileptr[0] = src_fileptr[0];
+    dest_fileptr[1] = src_fileptr[1];
+    dest_fileptr[2] = src_fileptr[2];
+    dest_fileptr[3] = src_fileptr[3];
+    dest_fileptr[4] = src_fileptr[4];
+}
 
 void write_entry(bseq1s_t * seq, half_mt_entry * in_en){
-    in_en->read_id = seq->read_id;
+    copy_fileptr(seq->fileptr, in_en->fileptr);
+    in_en->sam_size = seq->sam_size;
     in_en->correction = seq->correction;
     in_en->avg_qual = seq->avg_qual;
     in_en->flags = seq->flags;
@@ -82,7 +89,9 @@ void write_entry(bseq1s_t * seq, half_mt_entry * in_en){
 }
 
 void copy_entry(half_mt_entry * src_en, half_mt_entry * dest_en){
-    dest_en->read_id = src_en->read_id;
+
+    copy_fileptr(src_en->fileptr, dest_en->fileptr);
+    dest_en->sam_size = src_en->sam_size;
     dest_en->correction = src_en->correction;
     dest_en->avg_qual = src_en->avg_qual;
     dest_en->flags = src_en->flags;
@@ -125,11 +134,6 @@ void add_mt_entry_1(bseq1s_t *seq, sort_struct_t * sld){
 
 
     half_mt_entry * sort_en;
-    if(sort_verbose >= 10){
-        fprintf(stderr,"Ref pos : %ld\n",seq->abs_pos);
-        fprintf(stderr,"Flags : %d\n",seq->flags);
-        fprintf(stderr,"Mate pos : %d\n",seq->mate_diff);
-    }
     if(seq->is_rev){
         sort_en = &sld->mt[seq->abs_pos].re;
     }
@@ -214,17 +218,12 @@ void process_sam_record_1(bseq1s_t *seq, sort_struct_t * sld){
         return;
     }
     else{
-        if(seq->is_rev){
-            add_mt_entry_1(seq, sld);
-        }
-        else{
-            add_mt_entry_1(seq, sld);
-        }
+        add_mt_entry_1(seq, sld);
     }
 
 }
 
-int sort_ot_comparator(const void **p, const void **q) 
+int md_comparator(const void **p, const void **q) 
 {
     ot_entry* l = *((ot_entry **)p);
     ot_entry* r = *((ot_entry **)q); 
@@ -252,6 +251,7 @@ int sort_ot_comparator(const void **p, const void **q)
 
 
 
+
 void usage(){
     printf("./bwa sort -I <input sam> -O <output sam> -v <verbose level> \n");
 }
@@ -269,15 +269,15 @@ int get_sequence(char * line, size_t size, int64_t * chr_start_array, int * chr_
     chr_start_array[*chr_index] = 0;
     
     splits = strtok(line,&delim); 
-    while(splits != NULL){
-        if(splits[0] == 'L'){
-            chr_start_array[*chr_index] = (int64_t)strtoll(splits + 3, NULL,10);
+
+    int i = 0;
+    for(i=0;i<size;i++){
+        if(line[i] == 'L'){
             break;
         }
-        else{
-            splits = strtok(NULL,&delim);
-        }        
     }
+
+    chr_start_array[*chr_index] = (int64_t)strtoll(line + i + 3, NULL,10);
     *chr_index += 1;
     return 1;
 }
@@ -426,7 +426,7 @@ void get_record(char * line, size_t line_size, int *flags, int *chr_num, int64_t
 
 
 
-bseq1s_t * get_sam_record(char * line, size_t line_size,uint32_t read_id){
+bseq1s_t * get_sam_record(char * line, size_t line_size,uint64_t fileptr){
     
     int flags = 0;          // Field 2
     int chr_num = 0;            // Field 3
@@ -445,13 +445,15 @@ bseq1s_t * get_sam_record(char * line, size_t line_size,uint32_t read_id){
     }
 
     bseq1s_t * seq = (bseq1s_t *)malloc(sizeof(bseq1s_t));
-    seq->read_id = read_id;
+    memcpy(seq->fileptr,&fileptr,5*sizeof(uint8_t));
+    seq->sam_size = (uint16_t)line_size;
     seq->chr_num = chr_num;
     seq->abs_pos = pos - correction;
     seq->mate_diff = mate_diff;
     seq->correction = correction;
     seq->is_rev = (flags & 0x10) != 0 ? 1 : 0;
     seq->flags = flags;
+    seq->flags |= 0x2000;
     seq->avg_qual = avg_qual;
     seq->last_entry = 0;
    
@@ -495,7 +497,7 @@ int get_sequences(FILE * temp_unsorted_file,int64_t ** chr_start_array){
 void sort_ots(sort_struct_t * sld){
     // Sort the sort_ot 
     if(sld->sort_ot_length > 0){
-        qsort(sld->sort_ot,sld->sort_ot_length,sizeof(ot_entry *),sort_ot_comparator);
+        qsort(sld->sort_ot,sld->sort_ot_length,sizeof(ot_entry *),md_comparator);
     }
 
     return;
@@ -563,7 +565,8 @@ void check_for_duplicates(int64_t ref_pos,half_mt_entry * in_en, int64_t md_head
             if(((sld->sort_ot[md_head]->ote.flags & 0x100) != 0) || ((sld->sort_ot[md_head]->ote.flags & 0x400) != 0)){
                 break;
             }
-            if(sld->sort_ot[md_head]->ote.read_id != in_en->read_id){
+            //if(sld->sort_ot[md_head]->ote.read_id != in_en->read_id){
+            if(memcmp(sld->sort_ot[md_head]->ote.fileptr,in_en->fileptr,5*sizeof(uint8_t)) != 0){
                 // Not the same read
                 dup = is_duplicate(in_en,&sld->sort_ot[md_head]->ote);
                 if(dup == 1){
@@ -588,74 +591,6 @@ void check_for_duplicates(int64_t ref_pos,half_mt_entry * in_en, int64_t md_head
     return;
 }
 
-/*
-void mark_duplicate_mt_entry(int64_t ref_pos,int64_t md_head,half_mt_entry * in_en, sort_struct_t * sld, int check_for_duplicate){
-    int64_t i = 0;
-    int64_t ref_pos_without_corr = (ref_pos + in_en->correction);
-    half_mt_entry * single_en;
-    int64_t single_en_uncorr_ref_pos = 0;
-    assert(ref_pos_without_corr < sld->mt_length);
-    int64_t tmp_md_head = md_head;
-   
-    if(in_en->read_id == 0 || ((in_en->flags & 0x8000) != 0)){
-        // If in_en is invalid or it has already been seen before
-        return;
-    }
-
-    for(i = ref_pos+1;i<ref_pos_without_corr;i++){
-        if(md_head < sld->sort_ot_length){
-            // Get entry in the overflow table
-            single_en = &sld->sort_ot[md_head]->ote;
-            single_en_uncorr_ref_pos = sld->sort_ot[md_head]->ref_pos + single_en->correction;
-
-            while(ref_pos_without_corr > single_en_uncorr_ref_pos){
-                // The entry in the overflow table has a sort position smaller 
-                // the current entry under consideration
-                mark_duplicate_mt_entry(sld->sort_ot[md_head]->ref_pos, md_head, single_en, sld,1);
-                md_head++;
-                if(md_head < sld->sort_ot_length){
-                    single_en = &sld->sort_ot[md_head]->ote;
-                    single_en_uncorr_ref_pos = sld->sort_ot[md_head]->ref_pos + single_en->correction;
-                }
-                else{
-                    break;
-                }
-            }
-        }
-        mark_duplicate_mt_entry(sld->sort_ot[md_head]->ref_pos, md_head, single_en, sld, 0);
-    }
-    if(check_for_duplicate != 0){
-        check_for_duplicates(ref_pos,in_en, tmp_md_head,sld);
-    }
-    return;
-}
-
-*/
-
-void update_ot_head(int64_t * ot_head, int64_t current_ref,sort_struct_t * sld){
-    if(sld->sort_ot_length == 0 || sld->sort_ot_length <= *ot_head){
-        
-        // If sort_ot_length is zero or the head is already past the full table
-        // do nothing
-        return;
-    }
-
-    if(current_ref < sld->sort_ot[*ot_head]->ref_pos){
-        
-        // If current ref positon is less than the ref pos
-        // at the head of the table, do nothing
-        return;
-    }
-
-    while(current_ref > sld->sort_ot[*ot_head]->ref_pos){
-        *ot_head = *ot_head + 1;
-        if(*ot_head >= sld->sort_ot_length){
-            *ot_head = sld->sort_ot_length;
-            break;
-        }
-    }
-    return;
-}
 
 
 void mark_duplicates(sort_struct_t * sld, int *num_duplicates){
@@ -731,21 +666,319 @@ void sort_ST(void * data){
     
     // Mark duplicates end
 
-    struct_delete(sld);
-    free(sld);
+    s->sld = sld;
+
     free(queue_out);
     pthread_exit(0);
 }
 
-void sort_MT(FILE * in_sam, int num_threads){
+
+void update_head_ot(sort_struct_t * sld, int64_t ref_pos, int64_t * head_ot){
+    if(sld->sort_ot_length == 0){
+        // Do nothing if table is empty
+        return;
+    }
+    if(*head_ot >= sld->sort_ot_length){
+        // Do nothing if head is already part the size of the table
+        *head_ot = sld->sort_ot_length;
+        return;
+    }
+    ot_entry * sort_en = sld->sort_ot[*head_ot]; 
+    int64_t cur_ref = sort_en->ref_pos;
+
+    if(cur_ref >= ref_pos){
+        // DO nothing if the cur ref is greater than ref_pos
+        return;
+    }
+
+    while(cur_ref < ref_pos){
+        *head_ot = *head_ot + 1;
+        if(*head_ot >= sld->sort_ot_length){
+            *head_ot = sld->sort_ot_length;
+            return;
+        }
+        sort_en = sld->sort_ot[*head_ot]; 
+        cur_ref = sort_en->ref_pos;
+    }
+
+}
+
+typedef struct {
+    int64_t ref_pos;
+    half_mt_entry * ote;
+} sort_list_t;
+
+
+typedef struct {
+    int n,m;
+    sort_list_t ** list;
+} sort_list;
+
+
+int sort_comparator(const void **p, const void **q) 
+{
+    sort_list_t * l = *((sort_list_t **)p);
+    sort_list_t * r = *((sort_list_t **)q); 
+    
+    if((l->ref_pos) < (r->ref_pos)){
+        return -1;
+    }
+    else if((r->ref_pos) < (l->ref_pos)){
+        return 1;
+    }
+    else{
+        if(((l->ote->flags & 0x10) != 0) && ((r->ote->flags & 0x10) == 0)){
+            // r shoudl go before l
+            return 1;
+        }
+        else if(((r->ote->flags & 0x10) != 0) && ((l->ote->flags & 0x10) == 0)){
+            return -1;
+        }
+        else{
+            return 0;
+        }
+    }
+}
+
+void add_entry_to_sort_list(half_mt_entry * ote, int64_t ref_pos, sort_list * l_in){
+    if(l_in->n != 0 && (l_in->n % 100) == 0){
+        l_in->list = (sort_list_t**)realloc(l_in->list,(l_in->n + 100)*sizeof(sort_list_t*));
+    }
+
+    l_in->list[l_in->n] = (sort_list_t*) malloc(sizeof(sort_list_t));
+    l_in->list[l_in->n]->ref_pos = ref_pos;
+    l_in->list[l_in->n]->ote = ote;
+    l_in->n = l_in->n + 1;
+}
+
+void print_sort_list(sort_list * l){
+    int i = 0;
+    int64_t fp = 0;
+    for(i = 0;i<l->n;i++){
+        memcpy(&fp,l->list[i]->ote->fileptr,5*sizeof(uint8_t));
+        fprintf(stderr,"fp : %ld\n",fp);
+    }
+    if(l->n != 0){
+        fprintf(stderr,"===================================\n");
+    }
+}
+
+void get_valid_entries_list(int64_t ref_pos,sort_struct_t * sld,int64_t head_ot, sort_list * l, half_mt_entry * in_en){
+    //sort_list * l = (sort_list *) malloc(sizeof(sort_list));
+    l->list = (sort_list_t **) malloc(100 * sizeof(sort_list_t *));
+    l->n = 0;
+   
+    int max_correction = in_en->correction;
+
+    if((in_en->flags & 0x4000) != 0){
+        return;
+    }
+
+    int64_t i = 0;
+    
+    for(i = ref_pos;i<=ref_pos + max_correction;i++){
+        if((sld->mt[i].fe.flags != 0) && ((sld->mt[i].fe.flags & 0x4000) == 0)){
+            // Entry hasnt been seen yet
+
+            if((sld->mt[i].fe.correction + i) <= (ref_pos + max_correction)){
+                // Add entry to list
+                add_entry_to_sort_list(&sld->mt[i].fe,i+sld->mt[i].fe.correction,l);
+            }
+        }
+        if((sld->mt[i].re.flags != 0) && ((sld->mt[i].re.flags & 0x4000) == 0)){
+            // Entry hasnt been seen yet
+
+            if((sld->mt[i].re.correction + i) <= (ref_pos + max_correction)){
+                // Add entry to list
+                add_entry_to_sort_list(&sld->mt[i].re,i+sld->mt[i].re.correction,l);
+            }
+        }
+    }
+
+    if(head_ot < sld->sort_ot_length){
+        while(sld->sort_ot[head_ot]->ref_pos <= (ref_pos + max_correction)){
+            i = sld->sort_ot[head_ot]->ref_pos + sld->sort_ot[head_ot]->ote.correction;
+            if(((sld->sort_ot[head_ot]->ote.flags & 0x4000) == 0) && (i <= (ref_pos + max_correction))){
+                add_entry_to_sort_list(&sld->sort_ot[head_ot]->ote,i,l);
+            }
+            head_ot = head_ot + 1;
+            if(head_ot >= sld->sort_ot_length){
+                break;    
+            }
+        }
+    }
+
+    if(l->n != 0){
+        qsort(l->list,l->n,sizeof(sort_list_t *),sort_comparator);
+    }
+
+    //*l_in = l;
+    return;
+
+}
+
+
+void print_sam(FILE * in_sam, FILE * out_sam, half_mt_entry * en){
+   int64_t fp = 0;
+   memcpy(&fp,en->fileptr,5*sizeof(uint8_t));
+   fseek(in_sam,fp,SEEK_SET);
+   char * sam_str = (char *) malloc((en->sam_size + 1) * sizeof(char));
+   memset(sam_str,0,en->sam_size+1);
+   fread(sam_str,sizeof(char),en->sam_size,in_sam);
+   sam_str[en->sam_size] = '\0';
+
+   // Print name
+
+   int i = 0;
+   int flag_detected = 0;
+   for(i=0;i<en->sam_size;i++){
+       if(flag_detected == 0){
+           fprintf(out_sam,"%c",sam_str[i]);
+       }
+       if(sam_str[i] == '\t'){
+           if(flag_detected == 0){
+               flag_detected = 1;
+           }
+           else{
+               break;
+           }
+       }
+   }
+
+   fprintf(out_sam,"%d",en->flags & 0xFFF);
+   fprintf(out_sam,"%s",sam_str + i);
+   free(sam_str);
+
+   
+   en->flags |= 0x4000;
+
+}
+
+void free_sort_list(sort_list * l){
+    int i = 0;
+    if(l->list){
+        for(i=0;i<l->n;i++){
+            if(l->list[i]){
+                l->list[i]->ote = NULL;
+                free(l->list[i]);
+            }
+        }
+        free(l->list);
+    }
+}
+
+void generate_sorted_sam(FILE * in_sam, FILE * out_sam, sort_slave_t * sl){
+    // Resort the OT table
+    sort_struct_t * sld = sl->sld;
+    int64_t mt_length = sl->length;
+
+    int64_t i = 0;
+    int64_t head_ot = 0;
+    int64_t head_ot_ref_pos = 0;
+
+    int j = 0;
+
+    sort_list * l = (sort_list *) malloc(sizeof(sort_list));
+    int allocated_list = 1;
+
+    for(i=0;i<mt_length;i++){
+        
+        //Check if any entry in the mt at i is valid
+       
+        allocated_list = 1;
+        if(head_ot < sld->sort_ot_length){
+            head_ot_ref_pos = sld->sort_ot[head_ot]->ref_pos;
+            while(head_ot_ref_pos < i){
+                get_valid_entries_list(head_ot_ref_pos,sld,head_ot,l, &sld->sort_ot[head_ot]->ote);
+
+                for(j=0;j<l->n;j++){
+                    // Print sam record
+                    print_sam(in_sam,out_sam,l->list[j]->ote);
+                }
+                free_sort_list(l);
+                l->n = 0;
+                allocated_list = 1;
+
+                head_ot++;
+                if(head_ot >= sld->sort_ot_length){
+                    head_ot = sld->sort_ot_length;
+                    break;
+                }
+                head_ot_ref_pos = sld->sort_ot[head_ot]->ref_pos;
+            }
+        }
+
+
+
+
+        if(sld->mt[i].fe.flags != 0 && sld->mt[i].re.flags != 0){
+            // Both entries are valid
+            if(((sld->mt[i].fe.flags & 0x4000) == 0) && ((sld->mt[i].re.flags & 0x4000) == 0)){
+                if(sld->mt[i].fe.correction > sld->mt[i].re.correction){
+                    get_valid_entries_list(i,sld,head_ot,l, &sld->mt[i].fe);
+                }
+                else{
+                    get_valid_entries_list(i,sld,head_ot,l, &sld->mt[i].re);
+                }
+            }
+            else if(((sld->mt[i].fe.flags & 0x4000) != 0) && ((sld->mt[i].re.flags & 0x4000) == 0)){
+                get_valid_entries_list(i,sld,head_ot,l, &sld->mt[i].re);
+            }
+            else if(((sld->mt[i].fe.flags & 0x4000) == 0) && ((sld->mt[i].re.flags & 0x4000) != 0)){
+                get_valid_entries_list(i,sld,head_ot,l, &sld->mt[i].fe);
+            }
+        }
+        else if(sld->mt[i].fe.flags != 0){
+            get_valid_entries_list(i,sld,head_ot,l, &sld->mt[i].fe);
+        }
+        else if(sld->mt[i].re.flags != 0){
+            get_valid_entries_list(i,sld,head_ot,l, &sld->mt[i].re);
+        }
+        else{
+            allocated_list = 0;
+        }
+
+        //print_sort_list(l);
+        if(allocated_list == 1){
+            for(j=0;j<l->n;j++){
+                // Print sam record
+                print_sam(in_sam,out_sam,l->list[j]->ote);
+            }
+            free_sort_list(l);
+            l->n = 0;
+            allocated_list = 1;
+        }
+
+    }
+    
+}
+
+
+
+
+
+
+
+
+void sort_MT(char * in_sam_filename,char * out_sam_filename,int num_threads){
     int64_t * chr_len;
     char * line = NULL;
     size_t line_size = 0;
     size_t ret = 0;
+    uint32_t read_id = 0;
 
     int num_chromosomes = 0;
     int i = 0;
-    uint32_t read_id = 1;
+
+    FILE * in_sam = fopen(in_sam_filename,"r");
+    if(in_sam == NULL){
+        fprintf(stderr,"File %s not found\n",in_sam_filename);
+        return ;
+    }
+
+    FILE * out_sam = NULL;
+
+
 
     if(sort_verbose >= 3){
         clock_gettime(CLOCK_REALTIME,&ini_start);
@@ -826,15 +1059,17 @@ void sort_MT(FILE * in_sam, int num_threads){
         fprintf(stderr,"Initialization done in %f secs\n",ini_time);
     }
 
+    uint64_t fileptr = 0;
 
     queue * sending_queue = NULL;
     if(sort_verbose >= 3){
         clock_gettime(CLOCK_REALTIME,&read_start);
     }
     while(!feof(in_sam)){
+        fileptr = (uint64_t)ftell(in_sam);
         ret = getline(&line,&line_size,in_sam);
         if(ret != -1 && line[0] != '@'){
-            s = get_sam_record(line, strlen(line), read_id);
+            s = get_sam_record(line, strlen(line), fileptr);
             read_id++;
             if(s != NULL){
                 s->abs_pos += chr_len[s->chr_num - 1];
@@ -850,11 +1085,17 @@ void sort_MT(FILE * in_sam, int num_threads){
         }
     }
 
+    fclose(in_sam);
 
     for(i=0;i<num_threads;i++){
         sending_queue = qs[i];
         s = (bseq1s_t *) malloc( sizeof(bseq1s_t));
-        s->read_id = 0;
+        s->fileptr[0] = 0;
+        s->fileptr[1] = 0;
+        s->fileptr[2] = 0;
+        s->fileptr[3] = 0;
+        s->fileptr[4] = 0;
+        s->sam_size = 0;
         s->chr_num = 0;
         s->abs_pos = 0;
         s->mate_diff = 0;
@@ -869,7 +1110,7 @@ void sort_MT(FILE * in_sam, int num_threads){
     if(sort_verbose >= 3){
         clock_gettime(CLOCK_REALTIME,&read_end);
         read_time = (double)(read_end.tv_sec - read_start.tv_sec) + ((double)(read_end.tv_nsec - read_start.tv_nsec)/(double)(1000000000));
-        fprintf(stderr,"Read %d reads in %f secs\n",read_id-1,read_time);
+        fprintf(stderr,"Read %d reads in %f secs\n",read_id,read_time);
     }
 
 
@@ -908,6 +1149,30 @@ void sort_MT(FILE * in_sam, int num_threads){
 
     fprintf(stderr,"Total duplicates detected : %d\n",total_duplicates);
 
+
+    // Print output sam file
+
+    if(out_sam_filename == NULL){
+        out_sam = stdout;
+    }
+    else{
+        out_sam = fopen(out_sam_filename,"w");
+    }
+    in_sam = fopen(in_sam_filename,"r");
+
+    for(i=0;i<num_threads;i++){
+        generate_sorted_sam(in_sam, out_sam,&slaves[i]);
+        struct_delete(slaves[i].sld);
+        free(slaves[i].sld);
+    }
+
+
+
+
+
+
+
+
     free(slaves);
     free(pts);
     free(qs);
@@ -924,7 +1189,6 @@ int main_memsort(int argc, char *argv[]){
     int i = 0;
     int output_file = 0; 
     int num_threads = 1;
-    FILE * temp_unsorted_file;
     char * temp_unsorted_file_name;
     if(argc < rargc){
         usage();
@@ -979,20 +1243,15 @@ int main_memsort(int argc, char *argv[]){
         }
     }
 
-    temp_unsorted_file = fopen(temp_unsorted_file_name,"r");
-    if(temp_unsorted_file == NULL){
-        fprintf(stderr,"File %s not found\n",temp_unsorted_file_name);
-        return -1;
-    }
 
     if(output_file == 1){
-        sorted_file = fopen(sorted_file_name,"w");
-        stdout = sorted_file;
+        sort_MT(temp_unsorted_file_name,sorted_file_name,num_threads);
+    }
+    else{
+        sort_MT(temp_unsorted_file_name,NULL,num_threads);
     }
 
-    sort_MT(temp_unsorted_file, num_threads);
-
-    fclose(temp_unsorted_file);
+    //fclose(temp_unsorted_file);
     return 0;
 
 }

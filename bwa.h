@@ -33,7 +33,8 @@ typedef struct {
 } bseq1_t;
 
 typedef struct {
-    uint32_t read_id;
+    uint8_t fileptr[5];
+    uint16_t sam_size;
     int chr_num;
     int64_t abs_pos;            // Actual position with correction from cigar
     uint8_t correction;         // Correction applied on cigar. To get sam mapping position from this, add correction to abs_pos
