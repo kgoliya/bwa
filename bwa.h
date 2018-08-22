@@ -37,7 +37,7 @@ typedef struct {
     uint16_t sam_size;
     int chr_num;
     int64_t abs_pos;            // Actual position with correction from cigar
-    int8_t correction;         // Correction applied on cigar. To get sam mapping position from this, add correction to abs_pos
+    uint8_t correction;         // Correction applied on cigar. To get sam mapping position from this, add correction to abs_pos
     uint8_t is_rev;
     uint16_t avg_qual;
     uint16_t mate_diff;

@@ -4,7 +4,7 @@
 typedef struct {
     uint8_t fileptr[5];
     uint16_t sam_size;
-    int8_t correction; 
+    uint8_t correction; 
     uint16_t avg_qual;
 
     // Bit 10 : Is duplicate or not(0x400)
@@ -20,10 +20,10 @@ typedef struct {
 } half_mt_entry;
 
 
-typedef struct {
+/*typedef struct {
     half_mt_entry fe;
     half_mt_entry re;
-} mt_entry;
+} mt_entry;*/
 
 typedef struct {
     half_mt_entry ote;
@@ -43,12 +43,17 @@ typedef struct {
 } unmapped_entry_v;
 
 typedef struct {
-    mt_entry * mt;
+    half_mt_entry * fmt;
+    half_mt_entry * rmt;
     int64_t mt_length;
 
-    ot_entry ** sort_ot;
-    int64_t sort_ot_size;
-    int64_t sort_ot_length;
+    ot_entry ** fot;
+    int64_t fot_size;
+    int64_t fot_length;
+
+    ot_entry ** rot;
+    int64_t rot_size;
+    int64_t rot_length;
 
 } sort_struct_t;
 
