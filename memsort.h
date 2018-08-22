@@ -4,8 +4,8 @@
 typedef struct {
     uint8_t fileptr[5];
     uint16_t sam_size;
-    uint8_t correction; 
-    uint8_t avg_qual;
+    int8_t correction; 
+    uint16_t avg_qual;
 
     // Bit 10 : Is duplicate or not(0x400)
     // Bit 1 : Is properly paired or not(0x2)
@@ -29,6 +29,18 @@ typedef struct {
     half_mt_entry ote;
     int64_t ref_pos;    // Not corrected with CIGAR            
 } ot_entry;
+
+typedef struct {
+    uint8_t fileptr[5];
+    uint16_t sam_size;
+    char * sam;
+    int name_len;
+} unmapped_entry;
+
+typedef struct {
+    int n;
+    unmapped_entry ** list;
+} unmapped_entry_v;
 
 typedef struct {
     mt_entry * mt;
