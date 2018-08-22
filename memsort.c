@@ -825,8 +825,28 @@ int sort_comparator(const void **p, const void **q)
             return 1;
         }
         else{
+
+            // Orientations are the same, check for lexicographic ordering
+
             dec = lexicographic_comparator(l->sam,l->name_len, r->sam,r->name_len);
-            return dec;
+            if(dec != 0){
+                return dec;
+            }
+            else{
+                if(((l->ote->flags & 0x100) == 0) && ((r->ote->flags & 0x100) != 0)){
+                    // r is a secondary alignment
+                    // l goes before r
+                    return -1;
+                }
+                else if(((r->ote->flags & 0x100) == 0) && ((l->ote->flags & 0x100) != 0)){
+                    // l is a secondary alignment
+                    // r goes before l
+                    return 1;
+                }
+                else{
+                    return 0;
+                }
+            }
         }
 
 
@@ -1468,9 +1488,7 @@ void sort_MT(char * in_sam_filename,char * out_sam_filename,int num_threads){
     in_sam = fopen(in_sam_filename,"r");
 
     for(i=0;i<num_threads;i++){
-        if(i == 0){
-            generate_sorted_sam(in_sam, out_sam,&slaves[i]);
-        }
+        generate_sorted_sam(in_sam, out_sam,&slaves[i]);
         struct_delete(slaves[i].sld);
         free(slaves[i].sld);
     }
