@@ -224,6 +224,21 @@ void add_mt_entry(bseq1s_t *seq, sort_struct_t * sld){
             }
 
         }
+        else if(((sort_en->flags & 0x4) != 0) || ((seq->flags & 0x4) != 0)){
+            //Sort_en or seq is an unmapped alignment 
+                
+            if(((seq->flags & 0x4) != 0)){
+                // Seq is an unmapped alignments
+                // Place seq in overflow table
+                add_ot_entry(seq,sld);
+            }
+            else {
+                // Seq is not an unmapped alignment, which means sort_en is an unmapped alignment
+                add_ot_entry_from_mt(seq->abs_pos,sort_en, sld);
+                write_entry(seq,sort_en);
+            }
+
+        }
         else if(((sort_en->flags & 0x02) != 0) && ((seq->flags & 0x02) != 0)){
             // Both entries are properly paired
             if(sort_en->mate_diff == seq->mate_diff){
@@ -786,7 +801,8 @@ void mark_duplicates_in_ot(ot_entry ** ot, int64_t len, int rev){
     for(i=0;i<len-1;){
         update_i = 1;
         e1 = ot[i];
-        if(((e1->ote.flags & 0x400) != 0) || ((e1->ote.flags & 0x100) != 0)){
+        if(((e1->ote.flags & 0x400) != 0) || ((e1->ote.flags & 0x100) != 0) || ((e1->ote.flags & 0x4) != 0)){
+            // Ignore entry if it already marked as a duplicate, is a secondary alignment and is an unmapped entry
             i = i + 1;
             continue;
         }
@@ -939,6 +955,14 @@ int sort_comparator(const void **p, const void **q)
                 return dec;
             }
             else{
+                // First in pair goes first
+                if(((l->ote->flags & 0x40) == 0) && ((r->ote->flags & 0x40) != 0)){
+                    // r is first in pair
+                    return 1;
+                }
+                if(((l->ote->flags & 0x40) != 0) && ((r->ote->flags & 0x40) == 0)){
+                    return -1;
+                }
                 if(((l->ote->flags & 0x100) == 0) && ((r->ote->flags & 0x100) != 0)){
                     // r is a secondary alignment
                     // l goes before r
@@ -946,6 +970,16 @@ int sort_comparator(const void **p, const void **q)
                 }
                 else if(((r->ote->flags & 0x100) == 0) && ((l->ote->flags & 0x100) != 0)){
                     // l is a secondary alignment
+                    // r goes before l
+                    return 1;
+                }
+                else if(((l->ote->flags & 0x4) == 0) && ((r->ote->flags & 0x4) != 0)){
+                    // r is an unmapped alignment
+                    // l goes before r
+                    return -1;
+                }
+                else if(((r->ote->flags & 0x4) == 0) && ((l->ote->flags & 0x4) != 0)){
+                    // l is an unmapped alignment
                     // r goes before l
                     return 1;
                 }
@@ -1419,6 +1453,28 @@ void add_entry_to_umt(bseq1s_t * seq, unmapped_entry_v * umt){
     return;
 }
 
+void count_valid_entries(sort_struct_t * sld){
+    int64_t i = 0;
+    int64_t count_valid_entries = 0;
+    fprintf(stderr,"mt_length allocated : %ld\n",sld->mt_length);
+    for(i=0;i<sld->mt_length;i++){
+        if(sld->fmt[i].flags != 0){
+            count_valid_entries++;
+        }
+    }
+    fprintf(stderr,"Total valid entries in fmt: %ld\n",count_valid_entries);
+    count_valid_entries = 0;
+    for(i=0;i<sld->mt_length;i++){
+        if(sld->rmt[i].flags != 0){
+            count_valid_entries++;
+        }
+    }
+    fprintf(stderr,"Total valid entries in rmt: %ld\n",count_valid_entries);
+    fprintf(stderr,"Total entries in ots : %ld\n",sld->fot_length + sld->rot_length);
+
+}
+
+
 
 void sort_MT(char * in_sam_filename,char * out_sam_filename,int num_threads){
     int64_t * chr_len;
@@ -1631,9 +1687,12 @@ void sort_MT(char * in_sam_filename,char * out_sam_filename,int num_threads){
     in_sam = fopen(in_sam_filename,"r");
 
     for(i=0;i<num_threads;i++){
-        generate_sorted_sam(in_sam, out_sam,&slaves[i]);
+        //generate_sorted_sam(in_sam, out_sam,&slaves[i]);
+        fprintf(stderr,"Statistics for entries for tid : %d\n",i);
+        count_valid_entries(slaves[i].sld);
         struct_delete(slaves[i].sld);
         free(slaves[i].sld);
+        fprintf(stderr,"=================================\n");
     }
 
 
@@ -1649,7 +1708,7 @@ void sort_MT(char * in_sam_filename,char * out_sam_filename,int num_threads){
 
     for(i=0;i<umt.n;i++){
         //get_sam_umt(in_sam, umt.list[i]);
-        fprintf(out_sam,"%s",umt.list[i]->sam);
+        //fprintf(out_sam,"%s",umt.list[i]->sam);
         free(umt.list[i]->sam);
         free(umt.list[i]);
     }
