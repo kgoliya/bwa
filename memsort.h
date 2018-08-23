@@ -25,7 +25,7 @@ typedef struct {
 } mt_entry;*/
 
 typedef struct {
-    half_mt_entry ote;
+    half_mt_entry * ote;
     int64_t ref_pos;    // Not corrected with CIGAR            
 } ot_entry;
 
@@ -42,8 +42,8 @@ typedef struct {
 } unmapped_entry_v;
 
 typedef struct {
-    half_mt_entry * fmt;
-    half_mt_entry * rmt;
+    half_mt_entry ** fmt;
+    half_mt_entry ** rmt;
     int64_t mt_length;
 
     ot_entry ** fot;

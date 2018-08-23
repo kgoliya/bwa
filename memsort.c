@@ -55,11 +55,11 @@ void struct_init(sort_struct_t * sld, int64_t length){
     sld->rot_size = INIT_OVERFLOW_TABLE_SIZE;
     sld->rot_length = 0;
 
-    sld->fmt = (half_mt_entry * ) malloc(length * sizeof(half_mt_entry));
-    memset(sld->fmt,0,(length * sizeof(half_mt_entry)));
+    sld->fmt = (half_mt_entry ** ) malloc(length * sizeof(half_mt_entry *));
+    memset(sld->fmt,0,(length * sizeof(half_mt_entry *)));
    
-    sld->rmt = (half_mt_entry * ) malloc(length * sizeof(half_mt_entry));
-    memset(sld->rmt,0,(length * sizeof(half_mt_entry)));
+    sld->rmt = (half_mt_entry ** ) malloc(length * sizeof(half_mt_entry *));
+    memset(sld->rmt,0,(length * sizeof(half_mt_entry *)));
 
 
     sld->fot = (ot_entry ** ) malloc(INIT_OVERFLOW_TABLE_SIZE * sizeof(ot_entry *));
@@ -72,15 +72,26 @@ void struct_init(sort_struct_t * sld, int64_t length){
 
 void struct_delete(sort_struct_t * sld){
 
+    
+    int64_t i = 0;
+    for(i = 0;i<sld->mt_length;i++){
+        if(sld->fmt[i]){
+            free(sld->fmt[i]);
+        }
+        if(sld->rmt[i]){
+            free(sld->rmt[i]);
+        }
+    }
     free(sld->fmt);
     free(sld->rmt);
-    int64_t i = 0;
     for(i = sld->fot_length-1;i>=0;i--){
+        free(sld->fot[i]->ote);
         free(sld->fot[i]);
     }
     free(sld->fot);
 
     for(i = sld->rot_length-1;i>=0;i--){
+        free(sld->rot[i]->ote);
         free(sld->rot[i]);
     }
     free(sld->rot);
@@ -129,9 +140,10 @@ void add_ot_entry(bseq1s_t * seq,sort_struct_t * sld){
         index = sld->fot_length;
 
         sld->fot[index] = (ot_entry * ) malloc(sizeof(ot_entry));
+        sld->fot[index]->ote = (half_mt_entry *) malloc(sizeof(half_mt_entry));
         sld->fot[index]->ref_pos = seq->abs_pos;
 
-        write_entry(seq,&sld->fot[index]->ote);
+        write_entry(seq,sld->fot[index]->ote);
         sld->fot_length = sld->fot_length + 1;
     }
     else{
@@ -143,9 +155,10 @@ void add_ot_entry(bseq1s_t * seq,sort_struct_t * sld){
         index = sld->rot_length;
 
         sld->rot[index] = (ot_entry * ) malloc(sizeof(ot_entry));
+        sld->rot[index]->ote = (half_mt_entry *) malloc(sizeof(half_mt_entry));
         sld->rot[index]->ref_pos = seq->abs_pos;
 
-        write_entry(seq,&sld->rot[index]->ote);
+        write_entry(seq,sld->rot[index]->ote);
         sld->rot_length = sld->rot_length + 1;
     }
 
@@ -164,9 +177,10 @@ void add_ot_entry_from_mt(int64_t ref_pos,half_mt_entry * in_en, sort_struct_t *
         index = sld->fot_length;
 
         sld->fot[index] = (ot_entry * ) malloc(sizeof(ot_entry));
+        sld->fot[index]->ote = (half_mt_entry *) malloc(sizeof(half_mt_entry));
         sld->fot[index]->ref_pos = ref_pos;
 
-        copy_entry(in_en, &sld->fot[index]->ote);
+        copy_entry(in_en, sld->fot[index]->ote);
 
         sld->fot_length = sld->fot_length + 1;
     }
@@ -178,9 +192,10 @@ void add_ot_entry_from_mt(int64_t ref_pos,half_mt_entry * in_en, sort_struct_t *
         index = sld->rot_length;
 
         sld->rot[index] = (ot_entry * ) malloc(sizeof(ot_entry));
+        sld->rot[index]->ote = (half_mt_entry *) malloc(sizeof(half_mt_entry));
         sld->rot[index]->ref_pos = ref_pos;
 
-        copy_entry(in_en, &sld->rot[index]->ote);
+        copy_entry(in_en, sld->rot[index]->ote);
 
         sld->rot_length = sld->rot_length + 1;
     }
@@ -190,16 +205,26 @@ void add_ot_entry_from_mt(int64_t ref_pos,half_mt_entry * in_en, sort_struct_t *
 void add_mt_entry(bseq1s_t *seq, sort_struct_t * sld){
 
 
+    half_mt_entry ** sort_en_add;
     half_mt_entry * sort_en;
     int is_rev = seq->is_rev;
     int64_t tmp1 = 0;
     int64_t tmp2 = 0;
     if(seq->is_rev){
-        sort_en = &sld->rmt[seq->abs_pos];
+        sort_en_add = &sld->rmt[seq->abs_pos];
     }
     else {
-        sort_en = &sld->fmt[seq->abs_pos];
+        sort_en_add = &sld->fmt[seq->abs_pos];
     }
+
+
+    if(*sort_en_add == NULL){
+        *sort_en_add = (half_mt_entry *) malloc(sizeof(half_mt_entry));
+        memset(*sort_en_add,0,sizeof(half_mt_entry));
+        (*sort_en_add)->flags = 0; 
+    }
+
+    sort_en = *sort_en_add;
 
     if(sort_en->flags == 0){
         //Sort entry was free secondary alignment
@@ -778,12 +803,12 @@ int count_duplicates_from_table(sort_struct_t * sld){
     int count = 0;
 
     for(i=0;i<sld->fot_length;i++){
-        if((sld->fot[i]->ote.flags & 0x400) != 0){
+        if((sld->fot[i]->ote->flags & 0x400) != 0){
             count++;
         }
     }
     for(i=0;i<sld->rot_length;i++){
-        if((sld->rot[i]->ote.flags & 0x400) != 0){
+        if((sld->rot[i]->ote->flags & 0x400) != 0){
             count++;
         }
     }
@@ -801,7 +826,7 @@ void mark_duplicates_in_ot(ot_entry ** ot, int64_t len, int rev){
     for(i=0;i<len-1;){
         update_i = 1;
         e1 = ot[i];
-        if(((e1->ote.flags & 0x400) != 0) || ((e1->ote.flags & 0x100) != 0) || ((e1->ote.flags & 0x4) != 0)){
+        if(((e1->ote->flags & 0x400) != 0) || ((e1->ote->flags & 0x100) != 0) || ((e1->ote->flags & 0x4) != 0)){
             // Ignore entry if it already marked as a duplicate, is a secondary alignment and is an unmapped entry
             i = i + 1;
             continue;
@@ -817,17 +842,17 @@ void mark_duplicates_in_ot(ot_entry ** ot, int64_t len, int rev){
             }
             else{
                 // Check for duplicates here
-                dup = is_duplicate(&e1->ote, &e2->ote, rev, e1->ref_pos);
+                dup = is_duplicate(e1->ote, e2->ote, rev, e1->ref_pos);
                 if(dup == 1){
                     // Restart run from i + 1;
-                    e1->ote.flags |= 0x400;
-                    e1->ote.flags |= 0x8000;
+                    e1->ote->flags |= 0x400;
+                    e1->ote->flags |= 0x8000;
                     i = i + 1;
                     break;
                 }
                 else if(dup == -1){
-                    e2->ote.flags |= 0x400;
-                    e2->ote.flags |= 0x8000;
+                    e2->ote->flags |= 0x400;
+                    e2->ote->flags |= 0x8000;
                     if(update_i == 1){
                         i = j;
                     }
@@ -1172,9 +1197,9 @@ void get_valid_entries_list(FILE * in_sam,int64_t ref_pos,sort_struct_t * sld,in
 
         if(head_fot < sld->fot_length){
             while(sld->fot[head_fot]->ref_pos <= i){
-                i1 = sld->fot[head_fot]->ref_pos + sld->fot[head_fot]->ote.correction;
-                if(((sld->fot[head_fot]->ote.flags & 0x4000) == 0) && (i1 <= (ref_pos + max_correction))){
-                    add_entry_to_sort_list(&sld->fot[head_fot]->ote,i1,sld->fot[head_fot]->ref_pos,l);
+                i1 = sld->fot[head_fot]->ref_pos + sld->fot[head_fot]->ote->correction;
+                if(((sld->fot[head_fot]->ote->flags & 0x4000) == 0) && (i1 <= (ref_pos + max_correction))){
+                    add_entry_to_sort_list(sld->fot[head_fot]->ote,i1,sld->fot[head_fot]->ref_pos,l);
                 }
                 head_fot = head_fot + 1;
                 if(head_fot >= sld->fot_length){
@@ -1183,12 +1208,13 @@ void get_valid_entries_list(FILE * in_sam,int64_t ref_pos,sort_struct_t * sld,in
             }
         }
 
-        if((sld->fmt[i].flags != 0) && ((sld->fmt[i].flags & 0x4000) == 0)){
+        if((sld->fmt[i] != 0)){
+            if((sld->fmt[i]->flags & 0x4000) == 0){
             // Entry hasnt been seen yet
-
-            if((sld->fmt[i].correction + i) <= (ref_pos + max_correction)){
-                // Add entry to list
-                add_entry_to_sort_list(&sld->fmt[i],i+sld->fmt[i].correction,i,l);
+                if((sld->fmt[i]->correction + i) <= (ref_pos + max_correction)){
+                    // Add entry to list
+                    add_entry_to_sort_list(sld->fmt[i],i+sld->fmt[i]->correction,i,l);
+                }
             }
         }
     }
@@ -1198,9 +1224,9 @@ void get_valid_entries_list(FILE * in_sam,int64_t ref_pos,sort_struct_t * sld,in
 
         if(head_rot < sld->rot_length){
             while(sld->rot[head_rot]->ref_pos <= i){
-                i1 = sld->rot[head_rot]->ref_pos - sld->rot[head_rot]->ote.correction;
-                if(((sld->rot[head_rot]->ote.flags & 0x4000) == 0) && (i1 <= (ref_pos + max_correction))){
-                    add_entry_to_sort_list(&sld->rot[head_rot]->ote,i1,sld->rot[head_rot]->ref_pos,l);
+                i1 = sld->rot[head_rot]->ref_pos - sld->rot[head_rot]->ote->correction;
+                if(((sld->rot[head_rot]->ote->flags & 0x4000) == 0) && (i1 <= (ref_pos + max_correction))){
+                    add_entry_to_sort_list(sld->rot[head_rot]->ote,i1,sld->rot[head_rot]->ref_pos,l);
                 }
                 head_rot = head_rot + 1;
                 if(head_rot >= sld->rot_length){
@@ -1209,12 +1235,13 @@ void get_valid_entries_list(FILE * in_sam,int64_t ref_pos,sort_struct_t * sld,in
             }
         }
 
-        if((sld->rmt[i].flags != 0) && ((sld->rmt[i].flags & 0x4000) == 0)){
+        if((sld->rmt[i] != 0)){
+            if(((sld->rmt[i]->flags & 0x4000) == 0)){
             // Entry hasnt been seen yet
-
-            if((i - sld->rmt[i].correction) <= (ref_pos + max_correction)){
-                // Add entry to list
-                add_entry_to_sort_list(&sld->rmt[i],i-sld->rmt[i].correction,i,l);
+                if((i - sld->rmt[i]->correction) <= (ref_pos + max_correction)){
+                    // Add entry to list
+                    add_entry_to_sort_list(sld->rmt[i],i-sld->rmt[i]->correction,i,l);
+                }
             }
         }
     }
@@ -1303,7 +1330,7 @@ void update_fot_head(int64_t * head_fot, sort_struct_t * sld){
 
     //Increment head till it points to the first not seen entry
 
-    while((sld->fot[*head_fot]->ote.flags & 0x4000) != 0){
+    while((sld->fot[*head_fot]->ote->flags & 0x4000) != 0){
         *head_fot = *head_fot + 1;
         if(*head_fot >= sld->fot_length){
             *head_fot = sld->fot_length;
@@ -1339,7 +1366,7 @@ void update_rot_head(int64_t * head_rot, sort_struct_t * sld, int64_t ref_pos){
 
     //Increment head till it points to the first not seen entry
 
-    while((sld->rot[*head_rot]->ote.flags & 0x4000) != 0){
+    while((sld->rot[*head_rot]->ote->flags & 0x4000) != 0){
         *head_rot = *head_rot + 1;
         if(*head_rot >= sld->rot_length){
             *head_rot = sld->rot_length;
@@ -1379,7 +1406,7 @@ void generate_sorted_sam(FILE * in_sam, FILE * out_sam, sort_slave_t * sl){
             head_fot_ref_pos = sld->fot[head_fot]->ref_pos;
             while(head_fot_ref_pos < i){
                 update_rot_head(&head_rot,sld,head_fot_ref_pos);
-                get_valid_entries_list(in_sam,head_fot_ref_pos,sld,head_fot,head_rot,l, &sld->fot[head_fot]->ote);
+                get_valid_entries_list(in_sam,head_fot_ref_pos,sld,head_fot,head_rot,l, sld->fot[head_fot]->ote);
 
                 for(j=0;j<l->n;j++){
                     // Print sam record
@@ -1402,10 +1429,10 @@ void generate_sorted_sam(FILE * in_sam, FILE * out_sam, sort_slave_t * sl){
         update_fot_head(&head_fot,sld);
 
 
-        if(sld->fmt[i].flags != 0){
+        if(sld->fmt[i] != 0){
             update_rot_head(&head_rot,sld,i);
             //fmt entry is valid
-            get_valid_entries_list(in_sam,i,sld,head_fot,head_rot,l, &sld->fmt[i]);
+            get_valid_entries_list(in_sam,i,sld,head_fot,head_rot,l, sld->fmt[i]);
             for(j=0;j<l->n;j++){
                 // Print sam record
                 fprintf(out_sam,"%s",l->list[j]->sam);
@@ -1415,7 +1442,7 @@ void generate_sorted_sam(FILE * in_sam, FILE * out_sam, sort_slave_t * sl){
             l->n = 0;
         }
         else{
-            if(sld->rmt[i].flags != 0){
+            if(sld->rmt[i] != 0){
                 update_rot_head(&head_rot,sld,i);
                 get_valid_entries_list(in_sam,i,sld,head_fot,head_rot,l, NULL);
                 for(j=0;j<l->n;j++){
@@ -1458,14 +1485,14 @@ void count_valid_entries(sort_struct_t * sld){
     int64_t count_valid_entries = 0;
     fprintf(stderr,"mt_length allocated : %ld\n",sld->mt_length);
     for(i=0;i<sld->mt_length;i++){
-        if(sld->fmt[i].flags != 0){
+        if(sld->fmt[i] != 0){
             count_valid_entries++;
         }
     }
     fprintf(stderr,"Total valid entries in fmt: %ld\n",count_valid_entries);
     count_valid_entries = 0;
     for(i=0;i<sld->mt_length;i++){
-        if(sld->rmt[i].flags != 0){
+        if(sld->rmt[i] != 0){
             count_valid_entries++;
         }
     }
@@ -1687,12 +1714,12 @@ void sort_MT(char * in_sam_filename,char * out_sam_filename,int num_threads){
     in_sam = fopen(in_sam_filename,"r");
 
     for(i=0;i<num_threads;i++){
-        //generate_sorted_sam(in_sam, out_sam,&slaves[i]);
-        fprintf(stderr,"Statistics for entries for tid : %d\n",i);
-        count_valid_entries(slaves[i].sld);
+        generate_sorted_sam(in_sam, out_sam,&slaves[i]);
+        //fprintf(stderr,"Statistics for entries for tid : %d\n",i);
+        //count_valid_entries(slaves[i].sld);
         struct_delete(slaves[i].sld);
         free(slaves[i].sld);
-        fprintf(stderr,"=================================\n");
+        //fprintf(stderr,"=================================\n");
     }
 
 
@@ -1707,8 +1734,8 @@ void sort_MT(char * in_sam_filename,char * out_sam_filename,int num_threads){
     }
 
     for(i=0;i<umt.n;i++){
-        //get_sam_umt(in_sam, umt.list[i]);
-        //fprintf(out_sam,"%s",umt.list[i]->sam);
+        get_sam_umt(in_sam, umt.list[i]);
+        fprintf(out_sam,"%s",umt.list[i]->sam);
         free(umt.list[i]->sam);
         free(umt.list[i]);
     }
