@@ -70,6 +70,21 @@ typedef struct {
     queue * q;
 } sort_slave_t;
 
+typedef struct {
+    int64_t sort_ref_pos;
+    int64_t md_ref_pos;
+    char * sam;
+    int name_len;
+    half_mt_entry * ote;
+} sort_list_t;
+
+
+typedef struct {
+    int n;
+    int ot_entries_start;
+    sort_list_t ** list;
+} sort_list;
+
 void sorting_init(int64_t l_pac);
 void sorting_close();
 void process_sam_record(bseq1_t *seq);

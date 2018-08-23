@@ -230,10 +230,13 @@ void add_mt_entry(bseq1s_t *seq, sort_struct_t * sld){
                     add_ot_entry_from_mt(seq->abs_pos,sort_en, sld);
                     write_entry(seq,sort_en);
                 }
-                else{
+                else if(sort_en->avg_qual < seq->avg_qual){
                     // Seq is the duplicate entry
                     seq->flags |= 0x400;
                     seq->flags |= 0x8000;
+                    add_ot_entry(seq,sld);
+                }
+                else{
                     add_ot_entry(seq,sld);
                 }
             }
@@ -252,6 +255,7 @@ void add_mt_entry(bseq1s_t *seq, sort_struct_t * sld){
             write_entry(seq,sort_en);
         }
         else if(((seq->flags & 0x02) == 0) && ((sort_en->flags & 0x02) != 0)){
+            // Seq is not properly paired but sort_en is properly paired
              if(seq->avg_qual <= sort_en->avg_qual){
                  seq->flags |= 0x400;
                  seq->flags |= 0x8000;
@@ -260,16 +264,19 @@ void add_mt_entry(bseq1s_t *seq, sort_struct_t * sld){
         }
         else{
             // Both are not properly paired
-            if(seq->avg_qual <= sort_en->avg_qual){
-                 seq->flags |= 0x400;
-                 seq->flags |= 0x8000;
-                 add_ot_entry(seq,sld);
+            if(seq->avg_qual < sort_en->avg_qual){
+                seq->flags |= 0x400;
+                seq->flags |= 0x8000;
+                add_ot_entry(seq,sld);
             }
-            else{
+            else if(seq->avg_qual > sort_en->avg_qual){
                 sort_en->flags |= 0x400;            // Duplicate marked
                 sort_en->flags |= 0x8000;           // Entry processed
                 add_ot_entry_from_mt(seq->abs_pos,sort_en, sld);
                 write_entry(seq,sort_en);
+            }
+            else{
+                add_ot_entry(seq,sld);
             }
         }
     }
@@ -293,43 +300,235 @@ void process_sam_record_1(bseq1s_t *seq, sort_struct_t * sld){
 
 }
 
-int is_duplicate(half_mt_entry * en1, half_mt_entry * en2){
+int lexicographic_comparator(char * str0, int len0, char * str1, int len1){
+    int smaller_len_index = len0 < len1 ? 0 : 1;
+    int smaller_len = (smaller_len_index == 0) ? len0 : len1;
+
+    int i = 0;
+    int decision = 0;
+    for(i=0;i<smaller_len;i++){
+        if(str0[i] != str1[i]){
+            if(str0[i] < str1[i]){
+                decision = -1;
+            }
+            else{
+                decision = 1;
+            }
+            break;
+        }
+    }
+
+    if(decision == 0){
+        // No decision could be made
+        if(len0 != len1){
+            // Lengths are not equal
+            // The one with the smaller length should be first
+            if(len0 < len1){
+                // len0 should go before len1
+                decision = -1;
+            }
+            else{
+                decision = 1;
+            }
+        }
+        // else no decision can be reached
+    }
+
+    return decision;
+}
+
+
+// Return value :
+// 0 : no decision for marking duplicates
+// 1 : l_en1 is marked as duplicate
+// -1: l_en2 is marked as duplicate
+// 2 : Exit due to inputs being duplicates or secondary alignments
+int is_duplicate(sort_list_t * l_en1, sort_list_t * l_en2){
    
-    if(((en1->flags & 0x400) != 0) || ((en2->flags & 0x400) != 0) || ((en1->flags & 0x100) != 0) || ((en1->flags & 0x100) != 0)){
+    half_mt_entry * en1 = l_en1->ote;
+    half_mt_entry * en2 = l_en2->ote;
+
+    int lex = 0;
+    if(((en1->flags & 0x400) != 0) || ((en2->flags & 0x400) != 0) || ((en1->flags & 0x100) != 0) || ((en2->flags & 0x100) != 0)){
         // either entry is a duplicate or a secondary alignment
-        return 0;
+        return 2;
     }
     if((en1->flags & 0x10) == (en2->flags & 0x10)){
         // Both entries have the same orientation
 
         if((en1->flags & 0x02) == 0){
             // Not properly paired
-            if(en1->avg_qual <= en2->avg_qual){
-                return 1;
-            }
-            else{
-                if((en2->flags & 0x02) == 0){
-                    // if en2 is also not paired properly
-                    return -1;
+
+            if((en2->flags & 0x02) != 0){
+                // en2 is properly paired
+                if(en1->avg_qual <= en2->avg_qual){
+                    // l_en1 is duplicate
+                    return 1;
+                }
+                else{
+                    return 0;
                 }
             }
-        }
-        else{
-            if((en2->flags & 0x02) != 0){
-                if(en1->mate_diff == en2->mate_diff){
-                    if(en1->avg_qual <= en2->avg_qual){
+            else{
+                // en2 is not properly paired
+                if(en1->avg_qual < en2->avg_qual){
+                    // l_en1 is the duplicate
+                    return 1;
+                }
+                else if(en1->avg_qual == en2->avg_qual){
+                    // Avg quality scores are the same
+
+                    if(l_en1->sort_ref_pos < l_en2->sort_ref_pos){
+                        // l_en2 is the duplicate
+                        return -1;
+                    }
+                    else if(l_en1->sort_ref_pos > l_en2->sort_ref_pos){
                         return 1;
                     }
                     else{
+                        lex = lexicographic_comparator(l_en1->sam, l_en1->name_len, l_en2->sam, l_en2->name_len);
+
+                        // if lex is -1, l_en1 goes before l_en2
+                        // if lex is 1, l_en1 goes after l_en2
+                        if(lex == -1){
+                            // l_en2 is the duplicate
+                            return -1;
+                        }
+                        else {
+                            // l_en1 is the duplicate
+                            return 1;
+                        }
+                        
+                    }
+                }
+                else{
+                    // l_en2 is duplicate
+                    return -1;
+                }
+
+            }
+
+        }
+        else{
+            if((en2->flags & 0x02) != 0){
+                // both are paired correctly
+                if(en1->mate_diff == en2->mate_diff){
+                    // mates match
+                    if(en1->avg_qual < en2->avg_qual){
+                        // en1 is the duplicate
+                        return 1;
+                    }
+                    else if(en1->avg_qual > en2->avg_qual){
+                        // l_en2 is duplicate
                         return -1;
                     }
+                    else{
+                        // quality scores are equal
+                        if(l_en1->sort_ref_pos < l_en2->sort_ref_pos){
+                            // l_en2 is the duplicate
+                            return -1;
+                        }
+                        else if(l_en1->sort_ref_pos > l_en2->sort_ref_pos){
+                            return 1;
+                        }
+                        else{
+                            lex = lexicographic_comparator(l_en1->sam, l_en1->name_len, l_en2->sam, l_en2->name_len);
+
+                            // if lex is -1, l_en1 goes before l_en2
+                            // if lex is 1, l_en1 goes after l_en2
+                            if(lex == -1){
+                                // l_en2 is the duplicate
+                                return -1;
+                            }
+                            else {
+                                // l_en1 is the duplicate
+                                return 1;
+                            }
+
+                        }
+                    }
+                }
+                else{
+                    // mates do not match
+                    return 0;
+                }
+            }
+            else{
+                // en1 is properly paired but en2 is not properly paired
+                if(en2->avg_qual <= en1->avg_qual){
+                    // l_en2 is duplicate
+                    return -1;
+                }
+                else{
+                    return 0;
                 }
             }
         }
     }
     return 0;
-
 }
+
+void mark_duplicates_in_list(sort_list * l){
+    int i = 0, j = 0;
+    int update_i = 1;
+    int dup = 0;
+    sort_list_t * e1;
+    sort_list_t * e2;
+    for(i=0;i<l->n-1;){
+        update_i = 1;
+        e1 = l->list[i];
+        if((e1->ote->flags & 0x400) != 0){
+            // if e1 is a duplicate, select a different entry
+            i = i + 1;
+            continue;
+        }
+        for(j=i+1;j<l->n;j++){
+            assert ((e1->ote->flags & 0x400) == 0);
+            e2 = l->list[j];
+            if((e1->md_ref_pos != e2->md_ref_pos) || ((e1->ote->flags & 0x10) != (e1->ote->flags & 0x10))){
+                if(update_i == 1){
+                    i = j;
+                }
+                break;
+            }
+            else{
+                // Check for duplicates here
+                dup = is_duplicate(e1,e2);
+                if(dup == 1){
+                    e1->ote->flags |= 0x400;
+                    e1->ote->flags |= 0x8000;
+                    i = i + 1;
+                    /*if(update_i == 1){
+                        i = j;
+                    }*/
+                    break;
+                }
+                else if(dup == -1){
+                    e2->ote->flags |= 0x400;
+                    e2->ote->flags |= 0x8000;
+                    if(update_i == 1){
+                        i = j;
+                    }
+                }
+                else if(dup == 2){
+                    if(update_i == 1){
+                        i = j;
+                    }
+                }
+                else{
+                    if(update_i == 1){
+                        i = j;
+                        update_i = 0;
+                    }
+                }
+            }
+        }
+    }
+}
+
+
+
+
 int md_comparator(const void **p, const void **q) 
 {
     ot_entry* l = *((ot_entry **)p);
@@ -340,7 +539,7 @@ int md_comparator(const void **p, const void **q)
     }
     else if(l->ref_pos == r->ref_pos){
 
-        int dup = is_duplicate(&l->ote, &r->ote);
+        /*int dup = is_duplicate(&l->ote, &r->ote);
 
         if(dup == 1){
             l->ote.flags |= 0x400;
@@ -349,7 +548,7 @@ int md_comparator(const void **p, const void **q)
         else if(dup == -1){
             r->ote.flags |= 0x400;
             r->ote.flags |= 0x8000;
-        }
+        }*/
 
         return 0;
         /*if((((l->ote.flags & 0x100) != 0) || ((l->ote.flags & 0x400) != 0)) && ((r->ote.flags & 0x100) == 0) && ((r->ote.flags & 0x400) == 0)){
@@ -383,7 +582,6 @@ int get_sequence(char * line, size_t size, int64_t * chr_start_array, int * chr_
         return -1;
     }
 
-    char delim = '\t';
 
     chr_start_array[*chr_index] = 0;
     
@@ -409,7 +607,6 @@ void get_record(char * line, size_t line_size, int *flags, int *chr_num, int64_t
     int fcorr_done = 0;
     int stop = 0;
 
-    int l_seq = 0;
 
     for(i = 0;i<line_size;i++){
         if(line[i] == '\t'){
@@ -484,13 +681,13 @@ void get_record(char * line, size_t line_size, int *flags, int *chr_num, int64_t
             }
         }
         else if(field_num == 11){
-            *avg_qual = *avg_qual + (int)line[i] - 33;
-            l_seq++;
+            if(((int)line[i] - 33) >= 15){
+                *avg_qual = *avg_qual + (int)line[i] - 33;
+            }
         }
 
     }
     
-    //*avg_qual = *avg_qual / l_seq;
     return;
 }
 
@@ -747,60 +944,12 @@ void sort_ST(void * data){
 
 
 
-typedef struct {
-    int64_t ref_pos;
-    char * sam;
-    int name_len;
-    half_mt_entry * ote;
-} sort_list_t;
-
-
-typedef struct {
-    int n,m;
-    sort_list_t ** list;
-} sort_list;
 
 
 // If return value is 0, both are equivalent
 // If return value is 1, len1 should go before len0
 // If return value is -1, len0 should go before len1
 
-int lexicographic_comparator(char * str0, int len0, char * str1, int len1){
-    int smaller_len_index = len0 < len1 ? 0 : 1;
-    int smaller_len = (smaller_len_index == 0) ? len0 : len1;
-
-    int i = 0;
-    int decision = 0;
-    for(i=0;i<smaller_len;i++){
-        if(str0[i] != str1[i]){
-            if(str0[i] < str1[i]){
-                decision = -1;
-            }
-            else{
-                decision = 1;
-            }
-            break;
-        }
-    }
-
-    if(decision == 0){
-        // No decision could be made
-        if(len0 != len1){
-            // Lengths are not equal
-            // The one with the smaller length should be first
-            if(len0 < len1){
-                // len0 should go before len1
-                decision = -1;
-            }
-            else{
-                decision = 1;
-            }
-        }
-        // else no decision can be reached
-    }
-
-    return decision;
-}
 
 int sort_comparator(const void **p, const void **q) 
 {
@@ -808,10 +957,27 @@ int sort_comparator(const void **p, const void **q)
     sort_list_t * r = *((sort_list_t **)q); 
     
     int dec = 0;
-    if((l->ref_pos) < (r->ref_pos)){
+    /*if(l->md_ref_pos == r->md_ref_pos){
+        // Eligible for duplicate marking
+        dup = is_duplicate(l, r);
+
+        if(dup == 1){
+            l->ote->flags |= 0x400;
+            l->ote->flags |= 0x8000;
+        }
+        else if(dup == -1){
+            r->ote->flags |= 0x400;
+            r->ote->flags |= 0x8000;
+        }
+    }*/
+
+
+
+
+    if((l->sort_ref_pos) < (r->sort_ref_pos)){
         return -1;
     }
-    else if((r->ref_pos) < (l->ref_pos)){
+    else if((r->sort_ref_pos) < (l->sort_ref_pos)){
         return 1;
     }
     else{
@@ -864,13 +1030,14 @@ int umt_comparator(const void **p, const void **q)
 
 }
 
-void add_entry_to_sort_list(half_mt_entry * ote, int64_t ref_pos, sort_list * l_in){
+void add_entry_to_sort_list(half_mt_entry * ote, int64_t sort_ref_pos, int64_t md_ref_pos, sort_list * l_in){
     if(l_in->n != 0 && (l_in->n % 100) == 0){
         l_in->list = (sort_list_t**)realloc(l_in->list,(l_in->n + 100)*sizeof(sort_list_t*));
     }
 
     l_in->list[l_in->n] = (sort_list_t*) malloc(sizeof(sort_list_t));
-    l_in->list[l_in->n]->ref_pos = ref_pos;
+    l_in->list[l_in->n]->sort_ref_pos = sort_ref_pos;
+    l_in->list[l_in->n]->md_ref_pos = md_ref_pos;
     l_in->list[l_in->n]->ote = ote;
     l_in->n = l_in->n + 1;
 }
@@ -916,48 +1083,74 @@ void get_sam_umt(FILE * in_sam, unmapped_entry * en){
 
 
 void get_sam(FILE * in_sam, half_mt_entry * en, char ** out_sam_str, int *name_len){
-   int64_t fp = 0;
-   memcpy(&fp,en->fileptr,5*sizeof(uint8_t));
-   fseek(in_sam,fp,SEEK_SET);
-   char * sam_str = (char *) malloc((en->sam_size + 1) * sizeof(char)); 
-   *out_sam_str = (char *) malloc((en->sam_size + 4) * sizeof(char)); 
+    int64_t fp = 0;
+    memcpy(&fp,en->fileptr,5*sizeof(uint8_t));
+    fseek(in_sam,fp,SEEK_SET);
+    char * sam_str = (char *) malloc((en->sam_size + 1) * sizeof(char)); 
 
-   char * tmp_sam_ptr = *out_sam_str;
+    memset(sam_str,0,en->sam_size+1);
+    fread(sam_str,sizeof(char),en->sam_size,in_sam);
+    sam_str[en->sam_size] = '\0';
 
-   memset(sam_str,0,en->sam_size+1);
-   memset(tmp_sam_ptr,0,en->sam_size+4);
-   fread(sam_str,sizeof(char),en->sam_size,in_sam);
-   sam_str[en->sam_size] = '\0';
+    // Print name
 
-   // Print name
+    int i = 0;
+    int flag_detected = 0;
+    for(i=0;i<en->sam_size;i++){
+        if(sam_str[i] == '\t'){
+            *name_len = i;
+            break;
+        }
+    }
 
-   int i = 0;
-   int flag_detected = 0;
-   int out_sam_index = 0;
-   for(i=0;i<en->sam_size;i++){
-       if(flag_detected == 0){
-           tmp_sam_ptr[i] = sam_str[i];
-           //sprintf(out_sam_str,"%c",sam_str[i]);
-       }
-       if(sam_str[i] == '\t'){
-           if(flag_detected == 0){
-               flag_detected = 1;
-               *name_len = i;
-               out_sam_index = i + 1;
-           }
-           else{
-               break;
-           }
-       }
-   }
-
-   sprintf(tmp_sam_ptr + out_sam_index,"%d%s",(en->flags & 0xFFF),sam_str+i);
-
-   free(sam_str);
-   en->flags |= 0x4000;
-   //fprintf(out_sam,"%s",sam_str + i);
-    
+    *out_sam_str = sam_str;
+    en->flags |= 0x4000;
 }
+
+
+void update_sam_flags(char ** sam, half_mt_entry * en){
+    char * old_sam = *sam;
+    char * new_sam = (char *) malloc((en->sam_size + 4) * sizeof(char));
+
+    //char * new_sam = *sam;
+    memset(new_sam,0,en->sam_size+4);
+
+    int i = 0;
+    int flag_detected = 0;
+    int out_sam_index = 0;
+
+    for(i=0;i<en->sam_size;i++){
+        if(flag_detected == 0){
+            new_sam[i] = old_sam[i];
+            //sprintf(out_sam_str,"%c",sam_str[i]);
+        }
+        if(old_sam[i] == '\t'){
+            if(flag_detected == 0){
+                flag_detected = 1;
+                out_sam_index = i + 1;
+            }
+            else{
+                break;
+            }
+        }
+    }
+    sprintf(new_sam + out_sam_index,"%d%s",(en->flags & 0xFFF),old_sam+i);
+
+    *sam = new_sam;
+    free(old_sam);
+
+    return;
+}
+
+void update_sam_records_for_list(sort_list * l){
+    int i = 0;
+    for(i=0;i<l->n;i++){
+        update_sam_flags(&l->list[i]->sam, l->list[i]->ote);
+    }
+}
+
+
+
 void get_sam_records_for_list(FILE * in_sam,sort_list * l){
     int i = 0;
     for(i=0;i<l->n;i++){
@@ -970,6 +1163,7 @@ void get_valid_entries_list(FILE * in_sam,int64_t ref_pos,sort_struct_t * sld,in
     //sort_list * l = (sort_list *) malloc(sizeof(sort_list));
     l->list = (sort_list_t **) malloc(100 * sizeof(sort_list_t *));
     l->n = 0;
+    l->ot_entries_start = 0;
    
 
     int max_correction = 0;
@@ -984,43 +1178,75 @@ void get_valid_entries_list(FILE * in_sam,int64_t ref_pos,sort_struct_t * sld,in
         if((in_en->flags & 0x4000) != 0){
             return;
         }
-        add_entry_to_sort_list(in_en, ref_pos + in_en->correction, l);
+        add_entry_to_sort_list(in_en, ref_pos + in_en->correction, ref_pos,l);
         in_en->flags |= 0x4000;
     }
 
     int64_t i = 0;
+    int64_t i1 = 0;
     // Get entries from forward main table
     for(i = ref_pos;i<=ref_pos + mandatory_fcorr;i++){
+
+
+        // Check if there is any entry in the ot table that can go before the mt entry
+
+        if(head_fot < sld->fot_length){
+            while(sld->fot[head_fot]->ref_pos <= i){
+                i1 = sld->fot[head_fot]->ref_pos + sld->fot[head_fot]->ote.correction;
+                if(((sld->fot[head_fot]->ote.flags & 0x4000) == 0) && (i1 <= (ref_pos + max_correction))){
+                    add_entry_to_sort_list(&sld->fot[head_fot]->ote,i1,sld->fot[head_fot]->ref_pos,l);
+                }
+                head_fot = head_fot + 1;
+                if(head_fot >= sld->fot_length){
+                    break;    
+                }
+            }
+        }
+
         if((sld->fmt[i].flags != 0) && ((sld->fmt[i].flags & 0x4000) == 0)){
             // Entry hasnt been seen yet
 
             if((sld->fmt[i].correction + i) <= (ref_pos + max_correction)){
                 // Add entry to list
-                add_entry_to_sort_list(&sld->fmt[i],i+sld->fmt[i].correction,l);
+                add_entry_to_sort_list(&sld->fmt[i],i+sld->fmt[i].correction,i,l);
             }
         }
     }
 
-
     // Get entries from reverse main table
     for(i = ref_pos;i<=ref_pos + mandatory_rcorr;i++){
+
+        if(head_rot < sld->rot_length){
+            while(sld->rot[head_rot]->ref_pos <= i){
+                i1 = sld->rot[head_rot]->ref_pos - sld->rot[head_rot]->ote.correction;
+                if(((sld->rot[head_rot]->ote.flags & 0x4000) == 0) && (i1 <= (ref_pos + max_correction))){
+                    add_entry_to_sort_list(&sld->rot[head_rot]->ote,i1,sld->rot[head_rot]->ref_pos,l);
+                }
+                head_rot = head_rot + 1;
+                if(head_rot >= sld->rot_length){
+                    break;    
+                }
+            }
+        }
+
         if((sld->rmt[i].flags != 0) && ((sld->rmt[i].flags & 0x4000) == 0)){
             // Entry hasnt been seen yet
 
             if((i - sld->rmt[i].correction) <= (ref_pos + max_correction)){
                 // Add entry to list
-                add_entry_to_sort_list(&sld->rmt[i],i-sld->rmt[i].correction,l);
+                add_entry_to_sort_list(&sld->rmt[i],i-sld->rmt[i].correction,i,l);
             }
         }
     }
 
+    //l->ot_entries_start = l->n;
 
-    // Get entries from forward overflow table
+    /*
     if(head_fot < sld->fot_length){
         while(sld->fot[head_fot]->ref_pos <= (ref_pos + mandatory_fcorr)){
             i = sld->fot[head_fot]->ref_pos + sld->fot[head_fot]->ote.correction;
             if(((sld->fot[head_fot]->ote.flags & 0x4000) == 0) && (i <= (ref_pos + max_correction))){
-                add_entry_to_sort_list(&sld->fot[head_fot]->ote,i,l);
+                add_entry_to_sort_list(&sld->fot[head_fot]->ote,i,sld->fot[head_fot]->ref_pos,l);
             }
             head_fot = head_fot + 1;
             if(head_fot >= sld->fot_length){
@@ -1028,14 +1254,14 @@ void get_valid_entries_list(FILE * in_sam,int64_t ref_pos,sort_struct_t * sld,in
             }
         }
     }
+    */
 
-
-    // Get entries from reverse overflow table
+    /*
     if(head_rot < sld->rot_length){
         while(sld->rot[head_rot]->ref_pos <= (ref_pos + mandatory_rcorr)){
             i = sld->rot[head_rot]->ref_pos - sld->rot[head_rot]->ote.correction;
             if(((sld->rot[head_rot]->ote.flags & 0x4000) == 0) && (i <= (ref_pos + max_correction))){
-                add_entry_to_sort_list(&sld->rot[head_rot]->ote,i,l);
+                add_entry_to_sort_list(&sld->rot[head_rot]->ote,i,sld->rot[head_rot]->ref_pos,l);
             }
             head_rot = head_rot + 1;
             if(head_rot >= sld->rot_length){
@@ -1043,11 +1269,15 @@ void get_valid_entries_list(FILE * in_sam,int64_t ref_pos,sort_struct_t * sld,in
             }
         }
     }
+    */
     
     if(l->n != 0){
         // Get all sam records before sorting to compare names as well
         get_sam_records_for_list(in_sam,l);
+        mark_duplicates_in_list(l);
         qsort(l->list,l->n,sizeof(sort_list_t *),sort_comparator);
+        update_sam_records_for_list(l);
+
     }
 
     //*l_in = l;
