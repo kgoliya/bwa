@@ -191,6 +191,9 @@ void add_mt_entry(bseq1s_t *seq, sort_struct_t * sld){
 
 
     half_mt_entry * sort_en;
+    int is_rev = seq->is_rev;
+    int64_t tmp1 = 0;
+    int64_t tmp2 = 0;
     if(seq->is_rev){
         sort_en = &sld->rmt[seq->abs_pos];
     }
@@ -276,7 +279,27 @@ void add_mt_entry(bseq1s_t *seq, sort_struct_t * sld){
                 write_entry(seq,sort_en);
             }
             else{
-                add_ot_entry(seq,sld);
+                // Check for sorted position now
+                if(seq->is_rev){
+                    tmp1 = seq->abs_pos - seq->correction;
+                    tmp2 = seq->abs_pos - sort_en->correction;
+                }
+                else{
+                    tmp1 = seq->abs_pos + seq->correction;
+                    tmp2 = seq->abs_pos + sort_en->correction;
+                }
+                if(tmp1 < tmp2){
+                    // sort_en is the duplicate
+                    sort_en->flags |= 0x400;
+                    sort_en->flags |= 0x8000;
+                    add_ot_entry_from_mt(seq->abs_pos,sort_en, sld);
+                    write_entry(seq,sort_en);
+                }
+                else{
+                    seq->flags |= 0x400;
+                    seq->flags |= 0x8000;
+                    add_ot_entry(seq,sld);
+                }
             }
         }
     }
@@ -343,12 +366,11 @@ int lexicographic_comparator(char * str0, int len0, char * str1, int len1){
 // 1 : l_en1 is marked as duplicate
 // -1: l_en2 is marked as duplicate
 // 2 : Exit due to inputs being duplicates or secondary alignments
-int is_duplicate(sort_list_t * l_en1, sort_list_t * l_en2){
+int is_duplicate(half_mt_entry * en1, half_mt_entry * en2, int rev, int64_t ref_pos){
    
-    half_mt_entry * en1 = l_en1->ote;
-    half_mt_entry * en2 = l_en2->ote;
+    int64_t tmp1 = 0;
+    int64_t tmp2 = 0;
 
-    int lex = 0;
     if(((en1->flags & 0x400) != 0) || ((en2->flags & 0x400) != 0) || ((en1->flags & 0x100) != 0) || ((en2->flags & 0x100) != 0)){
         // either entry is a duplicate or a secondary alignment
         return 2;
@@ -377,28 +399,36 @@ int is_duplicate(sort_list_t * l_en1, sort_list_t * l_en2){
                 }
                 else if(en1->avg_qual == en2->avg_qual){
                     // Avg quality scores are the same
-
-                    if(l_en1->sort_ref_pos < l_en2->sort_ref_pos){
-                        // l_en2 is the duplicate
+                    
+                    // Check relative positions now
+                    //
+                    
+                    if(rev == 1){
+                        tmp1 = ref_pos - en1->correction;
+                        tmp2 = ref_pos - en2->correction; 
+                    }
+                    else{
+                        tmp1 = ref_pos + en1->correction;
+                        tmp2 = ref_pos + en2->correction; 
+                    }
+                    
+                    if(tmp1 < tmp2){
+                        //en2 is a duplicate
                         return -1;
                     }
-                    else if(l_en1->sort_ref_pos > l_en2->sort_ref_pos){
+                    else if(tmp1 > tmp2){
                         return 1;
                     }
                     else{
-                        lex = lexicographic_comparator(l_en1->sam, l_en1->name_len, l_en2->sam, l_en2->name_len);
+                        memcpy(&tmp1,en1->fileptr,5*sizeof(uint8_t));
+                        memcpy(&tmp1,en1->fileptr,5*sizeof(uint8_t));
 
-                        // if lex is -1, l_en1 goes before l_en2
-                        // if lex is 1, l_en1 goes after l_en2
-                        if(lex == -1){
-                            // l_en2 is the duplicate
-                            return -1;
-                        }
-                        else {
-                            // l_en1 is the duplicate
+                        if(tmp1 < tmp2){
                             return 1;
                         }
-                        
+                        else {
+                            return -1;
+                        }
                     }
                 }
                 else{
@@ -424,27 +454,32 @@ int is_duplicate(sort_list_t * l_en1, sort_list_t * l_en2){
                     }
                     else{
                         // quality scores are equal
-                        if(l_en1->sort_ref_pos < l_en2->sort_ref_pos){
-                            // l_en2 is the duplicate
+                        if(rev == 1){
+                            tmp1 = ref_pos - en1->correction;
+                            tmp2 = ref_pos - en2->correction; 
+                        }
+                        else{
+                            tmp1 = ref_pos + en1->correction;
+                            tmp2 = ref_pos + en2->correction; 
+                        }
+
+                        if(tmp1 < tmp2){
+                            //en2 is a duplicate
                             return -1;
                         }
-                        else if(l_en1->sort_ref_pos > l_en2->sort_ref_pos){
+                        else if(tmp1 > tmp2){
                             return 1;
                         }
                         else{
-                            lex = lexicographic_comparator(l_en1->sam, l_en1->name_len, l_en2->sam, l_en2->name_len);
+                            memcpy(&tmp1,en1->fileptr,5*sizeof(uint8_t));
+                            memcpy(&tmp1,en1->fileptr,5*sizeof(uint8_t));
 
-                            // if lex is -1, l_en1 goes before l_en2
-                            // if lex is 1, l_en1 goes after l_en2
-                            if(lex == -1){
-                                // l_en2 is the duplicate
-                                return -1;
-                            }
-                            else {
-                                // l_en1 is the duplicate
+                            if(tmp1 < tmp2){
                                 return 1;
                             }
-
+                            else {
+                                return -1;
+                            }
                         }
                     }
                 }
@@ -468,65 +503,6 @@ int is_duplicate(sort_list_t * l_en1, sort_list_t * l_en2){
     return 0;
 }
 
-void mark_duplicates_in_list(sort_list * l){
-    int i = 0, j = 0;
-    int update_i = 1;
-    int dup = 0;
-    sort_list_t * e1;
-    sort_list_t * e2;
-    for(i=0;i<l->n-1;){
-        update_i = 1;
-        e1 = l->list[i];
-        if((e1->ote->flags & 0x400) != 0){
-            // if e1 is a duplicate, select a different entry
-            i = i + 1;
-            continue;
-        }
-        for(j=i+1;j<l->n;j++){
-            assert ((e1->ote->flags & 0x400) == 0);
-            e2 = l->list[j];
-            if((e1->md_ref_pos != e2->md_ref_pos) || ((e1->ote->flags & 0x10) != (e1->ote->flags & 0x10))){
-                if(update_i == 1){
-                    i = j;
-                }
-                break;
-            }
-            else{
-                // Check for duplicates here
-                dup = is_duplicate(e1,e2);
-                if(dup == 1){
-                    e1->ote->flags |= 0x400;
-                    e1->ote->flags |= 0x8000;
-                    i = i + 1;
-                    /*if(update_i == 1){
-                        i = j;
-                    }*/
-                    break;
-                }
-                else if(dup == -1){
-                    e2->ote->flags |= 0x400;
-                    e2->ote->flags |= 0x8000;
-                    if(update_i == 1){
-                        i = j;
-                    }
-                }
-                else if(dup == 2){
-                    if(update_i == 1){
-                        i = j;
-                    }
-                }
-                else{
-                    if(update_i == 1){
-                        i = j;
-                        update_i = 0;
-                    }
-                }
-            }
-        }
-    }
-}
-
-
 
 
 int md_comparator(const void **p, const void **q) 
@@ -539,29 +515,8 @@ int md_comparator(const void **p, const void **q)
     }
     else if(l->ref_pos == r->ref_pos){
 
-        /*int dup = is_duplicate(&l->ote, &r->ote);
-
-        if(dup == 1){
-            l->ote.flags |= 0x400;
-            l->ote.flags |= 0x8000;
-        }
-        else if(dup == -1){
-            r->ote.flags |= 0x400;
-            r->ote.flags |= 0x8000;
-        }*/
 
         return 0;
-        /*if((((l->ote.flags & 0x100) != 0) || ((l->ote.flags & 0x400) != 0)) && ((r->ote.flags & 0x100) == 0) && ((r->ote.flags & 0x400) == 0)){
-            // r should go before l
-            return 1;
-        }
-        else if((((r->ote.flags & 0x100) != 0) || ((r->ote.flags & 0x400) != 0)) && ((l->ote.flags & 0x100) == 0) && ((l->ote.flags & 0x400) == 0)){
-            // l should go before r
-            return -1;
-        }
-        else{
-            return 0;
-        }*/
     }
     else{
         return 1;
@@ -572,7 +527,7 @@ int md_comparator(const void **p, const void **q)
 
 
 void usage(){
-    printf("./bwa sort -I <input sam> -O <output sam> -v <verbose level> \n");
+    printf("./bwa sort -I <input sam> -O <output sam> -v <verbose level> -t <no. of threads> -S <produce sorted sam>\n");
 }
 
 
@@ -801,78 +756,7 @@ void sort_ots(sort_struct_t * sld){
 
 
 
-// 0 : No decision taken
-// 1 : en1 is duplicate
-// -1 : en2 is duplicate
 
-
-
-/*void check_for_duplicates(int64_t ref_pos,half_mt_entry * in_en, int64_t md_head, sort_struct_t * sld, int *num_duplicates){
-    assert (in_en != NULL);
-    if(md_head >= sld->sort_ot_length || ((in_en->flags & 0x8000) != 0) || ((in_en->flags & 0x100) != 0)){
-        // Ignore input if input has been processed already or its a secondary alignment
-        if((in_en->flags & 0x400) != 0){
-            *num_duplicates = *num_duplicates + 1;
-        }
-        return;
-    }
-    int dup = 0;
-    while(sld->sort_ot[md_head]->ref_pos <= ref_pos){
-        if(sld->sort_ot[md_head]->ref_pos == ref_pos){
-            // The entry has the same ref pos
-            if(((sld->sort_ot[md_head]->ote.flags & 0x100) != 0) || ((sld->sort_ot[md_head]->ote.flags & 0x400) != 0)){
-                break;
-            }
-            //if(sld->sort_ot[md_head]->ote.read_id != in_en->read_id){
-            if(memcmp(sld->sort_ot[md_head]->ote.fileptr,in_en->fileptr,5*sizeof(uint8_t)) != 0){
-                // Not the same read
-                dup = is_duplicate(in_en,&sld->sort_ot[md_head]->ote);
-                if(dup == 1){
-                    in_en->flags |= 0x400;
-                    *num_duplicates = *num_duplicates + 1;
-                    break;
-                }
-                else if(dup == -1){
-                    *num_duplicates = *num_duplicates + 1;
-                    sld->sort_ot[md_head]->ote.flags |= 0x400;
-                    sld->sort_ot[md_head]->ote.flags |= 0x8000;
-                }
-            }
-        }
-        md_head++;
-        if(md_head >= sld->sort_ot_length){
-            break;
-        }
-    }
-
-    in_en->flags |= 0x8000;
-    return;
-}
-
-*/
-
-/*void mark_duplicates(sort_struct_t * sld, int *num_duplicates){
-    int64_t i = 0;
-    int64_t md_head = 0;
-    int64_t prev_ref_pos = 0;
-
-    half_mt_entry * single_en;
-    for(i=0;i<sld->sort_ot_length;i++){
-
-        single_en = &sld->sort_ot[i]->ote;
-        if(prev_ref_pos != sld->sort_ot[i]->ref_pos){
-            md_head = i;
-            prev_ref_pos = sld->sort_ot[i]->ref_pos;
-        }
-
-        if(sort_verbose >= 5){
-            fprintf(stderr,"i : %ld,md_head : %ld, ref_pos : %ld\n",i,md_head,sld->sort_ot[md_head]->ref_pos);
-        }
-        check_for_duplicates(i,single_en, md_head, sld, num_duplicates);
-    }
-
-    return;
-}*/
 
 int count_duplicates_from_table(sort_struct_t * sld){
     int64_t i = 0;
@@ -891,6 +775,74 @@ int count_duplicates_from_table(sort_struct_t * sld){
     return count;
 
 }
+
+void mark_duplicates_in_ot(ot_entry ** ot, int64_t len, int rev){
+    int64_t i,j = 0;
+    int update_i = 1;
+    ot_entry * e1 = 0;
+    ot_entry * e2 = 0;
+    int dup = 0;
+
+    for(i=0;i<len-1;){
+        update_i = 1;
+        e1 = ot[i];
+        if(((e1->ote.flags & 0x400) != 0) || ((e1->ote.flags & 0x100) != 0)){
+            i = i + 1;
+            continue;
+        }
+        for(j=i+1;j<len;j++){
+            e2 = ot[j];
+            if((e1->ref_pos != e2->ref_pos)){
+                // Crossed over into another ref_pos territory without seeing entries in between that were not duplicates
+                if(update_i == 1){
+                    i = j;
+                }
+                break;
+            }
+            else{
+                // Check for duplicates here
+                dup = is_duplicate(&e1->ote, &e2->ote, rev, e1->ref_pos);
+                if(dup == 1){
+                    // Restart run from i + 1;
+                    e1->ote.flags |= 0x400;
+                    e1->ote.flags |= 0x8000;
+                    i = i + 1;
+                    break;
+                }
+                else if(dup == -1){
+                    e2->ote.flags |= 0x400;
+                    e2->ote.flags |= 0x8000;
+                    if(update_i == 1){
+                        i = j;
+                    }
+                }
+                else if(dup == 2){
+                    // en2 is a secondary alignment
+                    if(update_i == 1){
+                        i = j;
+                    }
+                }
+                else{
+                    if(update_i == 1){
+                        i = j;
+                        // No decision, current entry at j might be a valid entry
+                        update_i = 0;
+                    }
+                }
+            }
+            
+        }
+
+    }
+
+
+}
+
+void mark_duplicates(sort_struct_t * sld){
+    mark_duplicates_in_ot(sld->fot, sld->fot_length, 0);
+    mark_duplicates_in_ot(sld->rot, sld->rot_length, 1);
+}
+
 
 
 
@@ -930,6 +882,7 @@ void sort_ST(void * data){
     clock_gettime(CLOCK_THREAD_CPUTIME_ID,&proc_start);
 
     sort_ots(sld);
+    mark_duplicates(sld);
     
     clock_gettime(CLOCK_THREAD_CPUTIME_ID,&proc_end);
     s->sort_time = (double)(proc_end.tv_sec - proc_start.tv_sec) + ((double)(proc_end.tv_nsec - proc_start.tv_nsec)/(double)(1000000000));
@@ -957,19 +910,6 @@ int sort_comparator(const void **p, const void **q)
     sort_list_t * r = *((sort_list_t **)q); 
     
     int dec = 0;
-    /*if(l->md_ref_pos == r->md_ref_pos){
-        // Eligible for duplicate marking
-        dup = is_duplicate(l, r);
-
-        if(dup == 1){
-            l->ote->flags |= 0x400;
-            l->ote->flags |= 0x8000;
-        }
-        else if(dup == -1){
-            r->ote->flags |= 0x400;
-            r->ote->flags |= 0x8000;
-        }
-    }*/
 
 
 
@@ -1095,7 +1035,6 @@ void get_sam(FILE * in_sam, half_mt_entry * en, char ** out_sam_str, int *name_l
     // Print name
 
     int i = 0;
-    int flag_detected = 0;
     for(i=0;i<en->sam_size;i++){
         if(sam_str[i] == '\t'){
             *name_len = i;
@@ -1159,6 +1098,7 @@ void get_sam_records_for_list(FILE * in_sam,sort_list * l){
     return;
 }
 
+
 void get_valid_entries_list(FILE * in_sam,int64_t ref_pos,sort_struct_t * sld,int64_t head_fot, int64_t head_rot,sort_list * l, half_mt_entry * in_en){
     //sort_list * l = (sort_list *) malloc(sizeof(sort_list));
     l->list = (sort_list_t **) malloc(100 * sizeof(sort_list_t *));
@@ -1185,6 +1125,12 @@ void get_valid_entries_list(FILE * in_sam,int64_t ref_pos,sort_struct_t * sld,in
     int64_t i = 0;
     int64_t i1 = 0;
     // Get entries from forward main table
+    // First get all entries that might be duplicates of this entry
+
+
+
+
+
     for(i = ref_pos;i<=ref_pos + mandatory_fcorr;i++){
 
 
@@ -1239,42 +1185,10 @@ void get_valid_entries_list(FILE * in_sam,int64_t ref_pos,sort_struct_t * sld,in
         }
     }
 
-    //l->ot_entries_start = l->n;
-
-    /*
-    if(head_fot < sld->fot_length){
-        while(sld->fot[head_fot]->ref_pos <= (ref_pos + mandatory_fcorr)){
-            i = sld->fot[head_fot]->ref_pos + sld->fot[head_fot]->ote.correction;
-            if(((sld->fot[head_fot]->ote.flags & 0x4000) == 0) && (i <= (ref_pos + max_correction))){
-                add_entry_to_sort_list(&sld->fot[head_fot]->ote,i,sld->fot[head_fot]->ref_pos,l);
-            }
-            head_fot = head_fot + 1;
-            if(head_fot >= sld->fot_length){
-                break;    
-            }
-        }
-    }
-    */
-
-    /*
-    if(head_rot < sld->rot_length){
-        while(sld->rot[head_rot]->ref_pos <= (ref_pos + mandatory_rcorr)){
-            i = sld->rot[head_rot]->ref_pos - sld->rot[head_rot]->ote.correction;
-            if(((sld->rot[head_rot]->ote.flags & 0x4000) == 0) && (i <= (ref_pos + max_correction))){
-                add_entry_to_sort_list(&sld->rot[head_rot]->ote,i,sld->rot[head_rot]->ref_pos,l);
-            }
-            head_rot = head_rot + 1;
-            if(head_rot >= sld->rot_length){
-                break;    
-            }
-        }
-    }
-    */
     
     if(l->n != 0){
         // Get all sam records before sorting to compare names as well
         get_sam_records_for_list(in_sam,l);
-        mark_duplicates_in_list(l);
         qsort(l->list,l->n,sizeof(sort_list_t *),sort_comparator);
         update_sam_records_for_list(l);
 
@@ -1377,7 +1291,6 @@ void update_rot_head(int64_t * head_rot, sort_struct_t * sld, int64_t ref_pos){
         return;
     }
 
-    int64_t ref_pos_with_corr = ref_pos + 256;
 
     if((sld->rot[*head_rot]->ref_pos) < ref_pos){
         // Do first try only if required ref pos is greater than current rot head ref pos
@@ -1718,7 +1631,7 @@ void sort_MT(char * in_sam_filename,char * out_sam_filename,int num_threads){
     in_sam = fopen(in_sam_filename,"r");
 
     for(i=0;i<num_threads;i++){
-        generate_sorted_sam(in_sam, out_sam,&slaves[i]);
+        //generate_sorted_sam(in_sam, out_sam,&slaves[i]);
         struct_delete(slaves[i].sld);
         free(slaves[i].sld);
     }
