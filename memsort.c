@@ -1631,7 +1631,7 @@ void sort_MT(char * in_sam_filename,char * out_sam_filename,int num_threads){
     in_sam = fopen(in_sam_filename,"r");
 
     for(i=0;i<num_threads;i++){
-        //generate_sorted_sam(in_sam, out_sam,&slaves[i]);
+        generate_sorted_sam(in_sam, out_sam,&slaves[i]);
         struct_delete(slaves[i].sld);
         free(slaves[i].sld);
     }
