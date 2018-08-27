@@ -120,6 +120,9 @@ static void mem_collect_intv(const mem_opt_t *opt, const bwt_t *bwt, int len, co
 	// first pass: find all SMEMs
 	while (x < len) {
 		if (seq[x] < 4) {
+
+                        // input x is current pivot from where we want to start smem generation.
+                        // Return value is next pivot
 			x = bwt_smem1(bwt, len, seq, x, start_width, &a->mem1, a->tmpv);
 			for (i = 0; i < a->mem1.n; ++i) {
 				bwtintv_t *p = &a->mem1.a[i];

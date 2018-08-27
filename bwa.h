@@ -43,6 +43,7 @@ typedef struct {
     uint16_t mate_diff;
     uint16_t flags;
     uint8_t last_entry;
+    void * mate;
 } bseq1s_t;
 
 extern int bwa_verbose;

@@ -85,13 +85,11 @@ void struct_delete(sort_struct_t * sld){
     free(sld->fmt);
     free(sld->rmt);
     for(i = sld->fot_length-1;i>=0;i--){
-        free(sld->fot[i]->ote);
         free(sld->fot[i]);
     }
     free(sld->fot);
 
     for(i = sld->rot_length-1;i>=0;i--){
-        free(sld->rot[i]->ote);
         free(sld->rot[i]);
     }
     free(sld->rot);
@@ -123,13 +121,19 @@ void copy_entry(half_mt_entry * src_en, half_mt_entry * dest_en){
     dest_en->avg_qual = src_en->avg_qual;
     dest_en->flags = src_en->flags;
     dest_en->mate_diff = src_en->mate_diff;
+    dest_en->mate = src_en->mate;
+
+    // Also go back to the mates position and change it to reflect dest pointer and not source ptr
     return; 
 }
 
-void add_ot_entry(bseq1s_t * seq,sort_struct_t * sld){
+half_mt_entry * add_ot_entry(bseq1s_t * seq,sort_struct_t * sld){
 
     int is_rev = (seq->flags & 0x10);
     int index = 0;
+
+    // Add ot entry : Return the address of sld->fot[index]->ote / sld->rot[index]->ote
+
 
     if(is_rev == 0){
         // seq belongs to forward strand
@@ -140,11 +144,12 @@ void add_ot_entry(bseq1s_t * seq,sort_struct_t * sld){
         index = sld->fot_length;
 
         sld->fot[index] = (ot_entry * ) malloc(sizeof(ot_entry));
-        sld->fot[index]->ote = (half_mt_entry *) malloc(sizeof(half_mt_entry));
+        //sld->fot[index]->ote = (half_mt_entry *) malloc(sizeof(half_mt_entry));
         sld->fot[index]->ref_pos = seq->abs_pos;
 
-        write_entry(seq,sld->fot[index]->ote);
+        write_entry(seq,&sld->fot[index]->ote);
         sld->fot_length = sld->fot_length + 1;
+        return &sld->fot[index]->ote;
     }
     else{
         // seq belongs to reverse strand
@@ -155,11 +160,11 @@ void add_ot_entry(bseq1s_t * seq,sort_struct_t * sld){
         index = sld->rot_length;
 
         sld->rot[index] = (ot_entry * ) malloc(sizeof(ot_entry));
-        sld->rot[index]->ote = (half_mt_entry *) malloc(sizeof(half_mt_entry));
         sld->rot[index]->ref_pos = seq->abs_pos;
 
-        write_entry(seq,sld->rot[index]->ote);
+        write_entry(seq,&sld->rot[index]->ote);
         sld->rot_length = sld->rot_length + 1;
+        return &sld->rot[index]->ote;
     }
 
 }
@@ -168,6 +173,13 @@ void add_ot_entry_from_mt(int64_t ref_pos,half_mt_entry * in_en, sort_struct_t *
     int is_rev = (in_en->flags & 0x10);
     int index = 0;
 
+    // If we ever enter this function, that means an entry from the main table is being transferred to the 
+    // overflow table. Thus we will need to change the location of the mate's mate (i.e. the current position if it
+    // is proerly paired and if it is not a secondary alignment
+
+    half_mt_entry * new_en = NULL;
+    new_en = (half_mt_entry *)in_en->mate;
+    new_en = NULL;
 
     if(is_rev == 0){
         if(sld->fot_length != 0 && sld->fot_length % sld->fot_size == 0){
@@ -177,10 +189,10 @@ void add_ot_entry_from_mt(int64_t ref_pos,half_mt_entry * in_en, sort_struct_t *
         index = sld->fot_length;
 
         sld->fot[index] = (ot_entry * ) malloc(sizeof(ot_entry));
-        sld->fot[index]->ote = (half_mt_entry *) malloc(sizeof(half_mt_entry));
         sld->fot[index]->ref_pos = ref_pos;
 
-        copy_entry(in_en, sld->fot[index]->ote);
+        copy_entry(in_en, &sld->fot[index]->ote);
+        new_en = &sld->fot[index]->ote;
 
         sld->fot_length = sld->fot_length + 1;
     }
@@ -192,30 +204,42 @@ void add_ot_entry_from_mt(int64_t ref_pos,half_mt_entry * in_en, sort_struct_t *
         index = sld->rot_length;
 
         sld->rot[index] = (ot_entry * ) malloc(sizeof(ot_entry));
-        sld->rot[index]->ote = (half_mt_entry *) malloc(sizeof(half_mt_entry));
         sld->rot[index]->ref_pos = ref_pos;
 
-        copy_entry(in_en, sld->rot[index]->ote);
+        copy_entry(in_en, &sld->rot[index]->ote);
+        new_en = &sld->rot[index]->ote;
 
         sld->rot_length = sld->rot_length + 1;
+    }
+
+    //check if new_en is properly paired, if yes then update its mate's mate 
+    if(((new_en->flags & 0x100) == 0) && ((new_en->flags & 0x2) != 0)){
+        // new_en is not a secondary alignment and is properly paired
+        half_mt_entry * new_en_m = (half_mt_entry *)new_en->mate;
+        new_en_m->mate = (void *)new_en;
     }
 }
 
 
-void add_mt_entry(bseq1s_t *seq, sort_struct_t * sld){
+half_mt_entry * add_mt_entry(bseq1s_t *seq, sort_struct_t * sld){
 
 
     half_mt_entry ** sort_en_add;
     half_mt_entry * sort_en;
+    
+    
     int is_rev = seq->is_rev;
     int64_t tmp1 = 0;
     int64_t tmp2 = 0;
+    
     if(seq->is_rev){
         sort_en_add = &sld->rmt[seq->abs_pos];
     }
     else {
         sort_en_add = &sld->fmt[seq->abs_pos];
     }
+
+    
 
 
     if(*sort_en_add == NULL){
@@ -224,10 +248,15 @@ void add_mt_entry(bseq1s_t *seq, sort_struct_t * sld){
         (*sort_en_add)->flags = 0; 
     }
 
+
     sort_en = *sort_en_add;
 
+
+    // Process seq first then worry about seq->mate
+
     if(sort_en->flags == 0){
-        //Sort entry was free secondary alignment
+        //Sort entry was free
+        //mate value will be NULL if mate is not present
         write_entry(seq,sort_en);
     }
     else{
@@ -240,7 +269,11 @@ void add_mt_entry(bseq1s_t *seq, sort_struct_t * sld){
             if(((seq->flags & 0x100) != 0)){
                 // Seq is are secondary alignments
                 // Place seq in overflow table
-                add_ot_entry(seq,sld);
+                sort_en = add_ot_entry(seq,sld);
+
+                // If seq is the entry being places in the overflow table, and sort_en is already valid, 
+                // this means that the mate is not going to look at old sort_en anymore, thus change sort_en to 
+                // the entry just written into the overflow table
             }
             else {
                 // Seq is not a secondary alignment, which means sort_en is a secondary alignment
@@ -255,7 +288,7 @@ void add_mt_entry(bseq1s_t *seq, sort_struct_t * sld){
             if(((seq->flags & 0x4) != 0)){
                 // Seq is an unmapped alignments
                 // Place seq in overflow table
-                add_ot_entry(seq,sld);
+                sort_en = add_ot_entry(seq,sld);
             }
             else {
                 // Seq is not an unmapped alignment, which means sort_en is an unmapped alignment
@@ -273,18 +306,18 @@ void add_mt_entry(bseq1s_t *seq, sort_struct_t * sld){
                     add_ot_entry_from_mt(seq->abs_pos,sort_en, sld);
                     write_entry(seq,sort_en);
                 }
-                else if(sort_en->avg_qual < seq->avg_qual){
+                else if(sort_en->avg_qual > seq->avg_qual){
                     // Seq is the duplicate entry
                     seq->flags |= 0x400;
                     seq->flags |= 0x8000;
-                    add_ot_entry(seq,sld);
+                    sort_en = add_ot_entry(seq,sld);
                 }
                 else{
-                    add_ot_entry(seq,sld);
+                    sort_en = add_ot_entry(seq,sld);
                 }
             }
             else{
-                add_ot_entry(seq,sld);
+                sort_en = add_ot_entry(seq,sld);
             }
         }
         else if(((sort_en->flags & 0x02) == 0) && ((seq->flags & 0x02) != 0)){
@@ -303,14 +336,14 @@ void add_mt_entry(bseq1s_t *seq, sort_struct_t * sld){
                  seq->flags |= 0x400;
                  seq->flags |= 0x8000;
              }
-             add_ot_entry(seq,sld);
+             sort_en = add_ot_entry(seq,sld);
         }
         else{
             // Both are not properly paired
             if(seq->avg_qual < sort_en->avg_qual){
                 seq->flags |= 0x400;
                 seq->flags |= 0x8000;
-                add_ot_entry(seq,sld);
+                sort_en = add_ot_entry(seq,sld);
             }
             else if(seq->avg_qual > sort_en->avg_qual){
                 sort_en->flags |= 0x400;            // Duplicate marked
@@ -338,27 +371,33 @@ void add_mt_entry(bseq1s_t *seq, sort_struct_t * sld){
                 else{
                     seq->flags |= 0x400;
                     seq->flags |= 0x8000;
-                    add_ot_entry(seq,sld);
+                    sort_en = add_ot_entry(seq,sld);
                 }
             }
         }
     }
-    return;
+
+    return sort_en;
 }
 
 
 void process_sam_record_1(bseq1s_t *seq, sort_struct_t * sld){
 
+    half_mt_entry * seq_en;
+    half_mt_entry * mate_en;
     if(seq == NULL){
         return;
     }
-    if(seq->abs_pos <= 0){
-        // TODO: Manage unmapped entries
-        // For now remove them
-        return;
+    seq_en = add_mt_entry(seq, sld);
+
+    // Check if the seq has a mate
+    if(seq->mate != NULL){
+        mate_en = add_mt_entry(seq->mate, sld);
+        seq_en->mate = (void *) mate_en;
+        mate_en->mate = (void *) seq_en;
     }
     else{
-        add_mt_entry(seq, sld);
+        seq_en->mate = NULL;
     }
 
 }
@@ -567,7 +606,8 @@ int md_comparator(const void **p, const void **q)
 
 
 void usage(){
-    printf("./bwa sort -I <input sam> -O <output sam> -v <verbose level> -t <no. of threads> -S <produce sorted sam>\n");
+    printf("./bwa sort -I <input sam> -O <output sam> -v <verbose level> -t <no. of threads> -pe \n");
+    printf("-pe Run for pair ended reads\n");
 }
 
 
@@ -803,12 +843,12 @@ int count_duplicates_from_table(sort_struct_t * sld){
     int count = 0;
 
     for(i=0;i<sld->fot_length;i++){
-        if((sld->fot[i]->ote->flags & 0x400) != 0){
+        if((sld->fot[i]->ote.flags & 0x400) != 0){
             count++;
         }
     }
     for(i=0;i<sld->rot_length;i++){
-        if((sld->rot[i]->ote->flags & 0x400) != 0){
+        if((sld->rot[i]->ote.flags & 0x400) != 0){
             count++;
         }
     }
@@ -826,7 +866,7 @@ void mark_duplicates_in_ot(ot_entry ** ot, int64_t len, int rev){
     for(i=0;i<len-1;){
         update_i = 1;
         e1 = ot[i];
-        if(((e1->ote->flags & 0x400) != 0) || ((e1->ote->flags & 0x100) != 0) || ((e1->ote->flags & 0x4) != 0)){
+        if(((e1->ote.flags & 0x400) != 0) || ((e1->ote.flags & 0x100) != 0) || ((e1->ote.flags & 0x4) != 0)){
             // Ignore entry if it already marked as a duplicate, is a secondary alignment and is an unmapped entry
             i = i + 1;
             continue;
@@ -842,17 +882,17 @@ void mark_duplicates_in_ot(ot_entry ** ot, int64_t len, int rev){
             }
             else{
                 // Check for duplicates here
-                dup = is_duplicate(e1->ote, e2->ote, rev, e1->ref_pos);
+                dup = is_duplicate(&e1->ote, &e2->ote, rev, e1->ref_pos);
                 if(dup == 1){
                     // Restart run from i + 1;
-                    e1->ote->flags |= 0x400;
-                    e1->ote->flags |= 0x8000;
+                    e1->ote.flags |= 0x400;
+                    e1->ote.flags |= 0x8000;
                     i = i + 1;
                     break;
                 }
                 else if(dup == -1){
-                    e2->ote->flags |= 0x400;
-                    e2->ote->flags |= 0x8000;
+                    e2->ote.flags |= 0x400;
+                    e2->ote.flags |= 0x8000;
                     if(update_i == 1){
                         i = j;
                     }
@@ -882,6 +922,59 @@ void mark_duplicates_in_ot(ot_entry ** ot, int64_t len, int rev){
 void mark_duplicates(sort_struct_t * sld){
     mark_duplicates_in_ot(sld->fot, sld->fot_length, 0);
     mark_duplicates_in_ot(sld->rot, sld->rot_length, 1);
+
+    // Go through all entries and check if they are duplicates,
+    // If they are duplicates, then check their mates. 
+    //          if their mates are also, duplicates, then they are valid duplicates
+    //          if their mates are not duplicates, remove the duplicate flag from their flag vector
+
+    int64_t i = 0;
+    half_mt_entry * mate;
+
+    for(i = 0;i<sld->fot_length;i++){
+        if((sld->fot[i]->ote.flags & 0x400) != 0){
+            // entry is a duplicate
+            
+            //check if entry is properly paired
+            if(((sld->fot[i]->ote.flags & 0x2) != 0) && ((sld->fot[i]->ote.flags & 0x100) == 0)){
+                // Entry is properly paired and is not a secondary alignment
+                // it should have a mate
+                mate = (half_mt_entry * )sld->fot[i]->ote.mate;
+                if((mate->flags & 0x400) != 0){
+                    // Do nothing
+                    continue;
+                }
+                else{
+                    // mate is not a duplicate
+                    sld->fot[i]->ote.flags &= 0xFBFF;       // 1111_1011_1111_1111
+                }
+
+            }
+        }
+    }
+    for(i = 0;i<sld->rot_length;i++){
+        if((sld->rot[i]->ote.flags & 0x400) != 0){
+            // entry is a duplicate
+            
+            //check if entry is properly paired
+            if(((sld->rot[i]->ote.flags & 0x2) != 0) && ((sld->rot[i]->ote.flags & 0x100) == 0)){
+                // Entry is properly paired and is not a secondary alignment
+                // it should have a mate
+                mate = (half_mt_entry * )sld->rot[i]->ote.mate;
+                if((mate->flags & 0x400) != 0){
+                    // Do nothing
+                    continue;
+                }
+                else{
+                    // mate is not a duplicate
+                    sld->rot[i]->ote.flags &= 0xFBFF;       // 1111_1011_1111_1111
+                }
+
+            }
+        }
+    }
+
+
 }
 
 
@@ -911,6 +1004,9 @@ void sort_ST(void * data){
             process_sam_record_1(seq, sld);
         }
         if(seq){
+            if(seq->mate != NULL){
+                free(seq->mate);
+            }
             free(seq);
         }
         clock_gettime(CLOCK_THREAD_CPUTIME_ID,&proc_end);
@@ -921,12 +1017,17 @@ void sort_ST(void * data){
 
     // Sorting the overflow table
     clock_gettime(CLOCK_THREAD_CPUTIME_ID,&proc_start);
-
     sort_ots(sld);
-    mark_duplicates(sld);
-    
     clock_gettime(CLOCK_THREAD_CPUTIME_ID,&proc_end);
     s->sort_time = (double)(proc_end.tv_sec - proc_start.tv_sec) + ((double)(proc_end.tv_nsec - proc_start.tv_nsec)/(double)(1000000000));
+    // Sorting end
+    
+    // Sorting the overflow table
+
+    clock_gettime(CLOCK_THREAD_CPUTIME_ID,&proc_start);
+    mark_duplicates(sld);
+    clock_gettime(CLOCK_THREAD_CPUTIME_ID,&proc_end);
+    s->md_time = (double)(proc_end.tv_sec - proc_start.tv_sec) + ((double)(proc_end.tv_nsec - proc_start.tv_nsec)/(double)(1000000000));
     // Sorting end
     s->num_duplicates = count_duplicates_from_table(sld);
 
@@ -1197,9 +1298,9 @@ void get_valid_entries_list(FILE * in_sam,int64_t ref_pos,sort_struct_t * sld,in
 
         if(head_fot < sld->fot_length){
             while(sld->fot[head_fot]->ref_pos <= i){
-                i1 = sld->fot[head_fot]->ref_pos + sld->fot[head_fot]->ote->correction;
-                if(((sld->fot[head_fot]->ote->flags & 0x4000) == 0) && (i1 <= (ref_pos + max_correction))){
-                    add_entry_to_sort_list(sld->fot[head_fot]->ote,i1,sld->fot[head_fot]->ref_pos,l);
+                i1 = sld->fot[head_fot]->ref_pos + sld->fot[head_fot]->ote.correction;
+                if(((sld->fot[head_fot]->ote.flags & 0x4000) == 0) && (i1 <= (ref_pos + max_correction))){
+                    add_entry_to_sort_list(&sld->fot[head_fot]->ote,i1,sld->fot[head_fot]->ref_pos,l);
                 }
                 head_fot = head_fot + 1;
                 if(head_fot >= sld->fot_length){
@@ -1224,9 +1325,9 @@ void get_valid_entries_list(FILE * in_sam,int64_t ref_pos,sort_struct_t * sld,in
 
         if(head_rot < sld->rot_length){
             while(sld->rot[head_rot]->ref_pos <= i){
-                i1 = sld->rot[head_rot]->ref_pos - sld->rot[head_rot]->ote->correction;
-                if(((sld->rot[head_rot]->ote->flags & 0x4000) == 0) && (i1 <= (ref_pos + max_correction))){
-                    add_entry_to_sort_list(sld->rot[head_rot]->ote,i1,sld->rot[head_rot]->ref_pos,l);
+                i1 = sld->rot[head_rot]->ref_pos - sld->rot[head_rot]->ote.correction;
+                if(((sld->rot[head_rot]->ote.flags & 0x4000) == 0) && (i1 <= (ref_pos + max_correction))){
+                    add_entry_to_sort_list(&sld->rot[head_rot]->ote,i1,sld->rot[head_rot]->ref_pos,l);
                 }
                 head_rot = head_rot + 1;
                 if(head_rot >= sld->rot_length){
@@ -1330,7 +1431,7 @@ void update_fot_head(int64_t * head_fot, sort_struct_t * sld){
 
     //Increment head till it points to the first not seen entry
 
-    while((sld->fot[*head_fot]->ote->flags & 0x4000) != 0){
+    while((sld->fot[*head_fot]->ote.flags & 0x4000) != 0){
         *head_fot = *head_fot + 1;
         if(*head_fot >= sld->fot_length){
             *head_fot = sld->fot_length;
@@ -1366,7 +1467,7 @@ void update_rot_head(int64_t * head_rot, sort_struct_t * sld, int64_t ref_pos){
 
     //Increment head till it points to the first not seen entry
 
-    while((sld->rot[*head_rot]->ote->flags & 0x4000) != 0){
+    while((sld->rot[*head_rot]->ote.flags & 0x4000) != 0){
         *head_rot = *head_rot + 1;
         if(*head_rot >= sld->rot_length){
             *head_rot = sld->rot_length;
@@ -1406,7 +1507,7 @@ void generate_sorted_sam(FILE * in_sam, FILE * out_sam, sort_slave_t * sl){
             head_fot_ref_pos = sld->fot[head_fot]->ref_pos;
             while(head_fot_ref_pos < i){
                 update_rot_head(&head_rot,sld,head_fot_ref_pos);
-                get_valid_entries_list(in_sam,head_fot_ref_pos,sld,head_fot,head_rot,l, sld->fot[head_fot]->ote);
+                get_valid_entries_list(in_sam,head_fot_ref_pos,sld,head_fot,head_rot,l, &sld->fot[head_fot]->ote);
 
                 for(j=0;j<l->n;j++){
                     // Print sam record
@@ -1503,7 +1604,7 @@ void count_valid_entries(sort_struct_t * sld){
 
 
 
-void sort_MT(char * in_sam_filename,char * out_sam_filename,int num_threads){
+void sort_MT(char * in_sam_filename,char * out_sam_filename,int num_threads, int pair_ended){
     int64_t * chr_len;
     char * line = NULL;
     size_t line_size = 0;
@@ -1575,7 +1676,9 @@ void sort_MT(char * in_sam_filename,char * out_sam_filename,int num_threads){
     queue ** qs = (queue **) malloc(num_threads * sizeof(queue *));
     pthread_t * pts = (pthread_t *) malloc(num_threads * sizeof(pthread_t));
     sort_slave_t * slaves = (sort_slave_t *) malloc(num_threads * sizeof(sort_slave_t));
+
     bseq1s_t * s;
+    bseq1s_t * m;
 
     unmapped_entry_v umt;
     umt.n = 0;
@@ -1620,7 +1723,50 @@ void sort_MT(char * in_sam_filename,char * out_sam_filename,int num_threads){
             read_id++;
             if(s->chr_num != -1 && s->abs_pos != -1){
             //if(s != NULL){
+
+                // Entry has valid sam record
+                // Search for mat if the entry is properly paired and not a secondary alignment
+                
+                if(((s->flags & 0x2) != 0) && ((s->flags & 0x100) == 0)){
+                    // s is properly paired and not a secondary alignment
+                    while(1){
+                        fileptr = (uint64_t)ftell(in_sam);
+                        ret = getline(&line,&line_size,in_sam);
+                        if(ret != -1 && line[0] != '@'){
+                            m = get_sam_record(line,strlen(line),fileptr);
+                            read_id++;
+                        }
+
+                        // The mate should go to the same chromosome and also be properly paired and not a secondary alignment;
+
+                        if(((m->flags & 0x2) != 0) && ((m->flags & 0x100) == 0)){
+                            s->mate = m;
+                            break; 
+                        }
+                        else{
+                            if(m->chr_num != -1 && m->abs_pos != -1){
+                                m->abs_pos += chr_len[m->chr_num - 1];
+                                m->mate = NULL; 
+                                tid = chr_thread_id[m->chr_num - 1];
+                                sending_queue = qs[tid];
+                                addElement(sending_queue, (void *)m);
+                            }
+                            else{
+                                add_entry_to_umt(m,&umt);
+                                free(m);
+                            }
+                        }
+                    }
+                }
+                else{
+                    s->mate = NULL;
+                }
+
                 s->abs_pos += chr_len[s->chr_num - 1];
+                if(s->mate != NULL){
+                    //m = (bseq1s_t * ) s->mate;
+                    m->abs_pos += chr_len[s->chr_num - 1];
+                }
                 tid = chr_thread_id[s->chr_num - 1];
                 sending_queue = qs[tid];
                 addElement(sending_queue, (void *)s);
@@ -1696,6 +1842,7 @@ void sort_MT(char * in_sam_filename,char * out_sam_filename,int num_threads){
             fprintf(stderr,"\t%d Duplicates detected\n",slaves[i].num_duplicates);
 
             fprintf(stderr,"\tSorting time : %f\n",slaves[i].sort_time);
+            fprintf(stderr,"\tMD time : %f\n",slaves[i].md_time);
             fprintf(stderr,"\tMark duplicates time : %f\n",slaves[i].md_time);
         }
     }
@@ -1725,17 +1872,17 @@ void sort_MT(char * in_sam_filename,char * out_sam_filename,int num_threads){
 
     // Get all strings for unmapped entries
 
-    for(i=0;i<umt.n;i++){
+    /*for(i=0;i<umt.n;i++){
         get_sam_umt(in_sam, umt.list[i]);
     }
 
     if(umt.n > 0){
         qsort(umt.list,umt.n,sizeof(unmapped_entry *),umt_comparator);
-    }
+    }*/
 
     for(i=0;i<umt.n;i++){
-        get_sam_umt(in_sam, umt.list[i]);
-        fprintf(out_sam,"%s",umt.list[i]->sam);
+        //get_sam_umt(in_sam, umt.list[i]);
+        //fprintf(out_sam,"%s",umt.list[i]->sam);
         free(umt.list[i]->sam);
         free(umt.list[i]);
     }
@@ -1763,6 +1910,7 @@ int main_memsort(int argc, char *argv[]){
     int i = 0;
     int output_file = 0; 
     int num_threads = 1;
+    int pair_ended = 0;
     char * temp_unsorted_file_name;
     if(argc < rargc){
         usage();
@@ -1815,14 +1963,18 @@ int main_memsort(int argc, char *argv[]){
             }
             continue;
         }
+        if(strcmp(argv[i],"-pe") == 0){
+            pair_ended = 1;
+            continue;
+        }
     }
 
 
     if(output_file == 1){
-        sort_MT(temp_unsorted_file_name,sorted_file_name,num_threads);
+        sort_MT(temp_unsorted_file_name,sorted_file_name,num_threads, pair_ended);
     }
     else{
-        sort_MT(temp_unsorted_file_name,NULL,num_threads);
+        sort_MT(temp_unsorted_file_name,NULL,num_threads,pair_ended);
     }
 
     //fclose(temp_unsorted_file);

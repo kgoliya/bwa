@@ -323,12 +323,16 @@ int bwt_smem1a(const bwt_t *bwt, int len, const uint8_t *q, int x, int min_intv,
 	ret = curr->a[0].info; // this will be the returned value
 	swap = curr; curr = prev; prev = swap;
 
+        // Backward searches starts from one character prev to the current pivot
+
+
 	for (i = x - 1; i >= -1; --i) { // backward search for MEMs
 		c = i < 0? -1 : q[i] < 4? q[i] : -1; // c==-1 if i<0 or q[i] is an ambiguous base
 		for (j = 0, curr->n = 0; j < prev->n; ++j) {
 			bwtintv_t *p = &prev->a[j];
 			if (c >= 0 && ik.x[2] >= max_intv) bwt_extend(bwt, p, ok, 1);
 			if (c < 0 || ik.x[2] < max_intv || ok[c].x[2] < min_intv) { // keep the hit if reaching the beginning or an ambiguous base or the intv is small enough
+                            // Do this only when you stop backward extension
 				if (curr->n == 0) { // test curr->n>0 to make sure there are no longer matches
 					if (mem->n == 0 || i + 1 < mem->a[mem->n-1].info>>32) { // skip contained matches
 						ik = *p; ik.info |= (uint64_t)(i + 1)<<32;

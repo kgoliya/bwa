@@ -16,6 +16,9 @@ typedef struct {
     // Bit 13: valid(0x2000)
     uint16_t flags;
     uint16_t mate_diff;
+
+    // mate entry's pointer
+    void * mate;
 } half_mt_entry;
 
 
@@ -25,7 +28,7 @@ typedef struct {
 } mt_entry;*/
 
 typedef struct {
-    half_mt_entry * ote;
+    half_mt_entry ote;
     int64_t ref_pos;    // Not corrected with CIGAR            
 } ot_entry;
 
@@ -83,6 +86,7 @@ typedef struct {
     int ot_entries_start;
     sort_list_t ** list;
 } sort_list;
+
 
 void sorting_init(int64_t l_pac);
 void sorting_close();
