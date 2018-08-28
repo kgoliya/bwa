@@ -529,81 +529,93 @@ int is_duplicate_ens(half_mt_entry * en1, half_mt_entry * en2, int rev, int64_t 
             print_mt_entry(en1,en2);
         }
         // en1 is not properly paired or en2 is properly paired
-        // Check orientation of the read, orientation of mate
-        if(((en1->flags & 0x10) == (en2->flags & 0x10)) && ((en1->flags & 0x20) == (en2->flags & 0x20))){
-            if(en1->avg_qual < en2->avg_qual){
-                // l_en1 is the duplicate
-                if(sort_verbose >= 5){
-                    fprintf(stderr,"1 was marked duplicate due to lower avg_qual\n");
-                }
-                en1->flags |= 0x400;
-                en1->flags |= 0x8000;
+        // Check orientation of the read
+        if(((en1->flags & 0x10) == (en2->flags & 0x10))){
 
-                return 1;
-            }
-            else if(en1->avg_qual == en2->avg_qual){
-                // Avg quality scores are the same
-
-                // Check relative positions now
-
-                if(rev == 1){
-                    tmp1 = ref_pos - en1->correction;
-                    tmp2 = ref_pos - en2->correction; 
-                }
-                else{
-                    tmp1 = ref_pos + en1->correction;
-                    tmp2 = ref_pos + en2->correction; 
-                }
-
-                if(tmp1 < tmp2){
-                    //en2 is a duplicate
+            //check if mate is mapped and compare mate positions only if mate is mapped
+            
+            if((((en1->flags & 0x8) == 0) && ((en2->flags & 0x8) == 0) && ((en1->flags & 0x20) == (en2->flags & 0x20))) || ((en1->flags & 0x8) != 0) || ((en2->flags & 0x8) != 0)){
+                if(en1->avg_qual < en2->avg_qual){
+                    // l_en1 is the duplicate
                     if(sort_verbose >= 5){
-                        fprintf(stderr,"2 was marked duplicate due to higher sorted_position\n");
-                    }
-                    en2->flags |= 0x400;
-                    en2->flags |= 0x8000;
-                    return -1;
-                }
-                else if(tmp1 > tmp2){
-                    if(sort_verbose >= 5){
-                        fprintf(stderr,"1 was marked duplicate due to higher sorted_position\n");
+                        fprintf(stderr,"1 was marked duplicate due to lower avg_qual\n");
                     }
                     en1->flags |= 0x400;
                     en1->flags |= 0x8000;
+
                     return 1;
                 }
-                else{
-                    if(((en1->flags & 0x40) == (en2->flags & 0x40))){
-                        memcpy(&tmp1,en1->fileptr,5*sizeof(uint8_t));
-                        memcpy(&tmp2,en1->fileptr,5*sizeof(uint8_t));
+                else if(en1->avg_qual == en2->avg_qual){
+                    // Avg quality scores are the same
 
-                        if(tmp1 < tmp2){
-                            if(sort_verbose >= 5){
-                                fprintf(stderr,"2 was marked duplicate due to higher fileptr\n");
-                            }
-                            en2->flags |= 0x400;
-                            en2->flags |= 0x8000;
-                            return -1;
+                    // Check relative positions now
+
+                    if(rev == 1){
+                        tmp1 = ref_pos - en1->correction;
+                        tmp2 = ref_pos - en2->correction; 
+                    }
+                    else{
+                        tmp1 = ref_pos + en1->correction;
+                        tmp2 = ref_pos + en2->correction; 
+                    }
+
+                    if(tmp1 < tmp2){
+                        //en2 is a duplicate
+                        if(sort_verbose >= 5){
+                            fprintf(stderr,"2 was marked duplicate due to higher sorted_position\n");
                         }
-                        else {
-                            if(sort_verbose >= 5){
-                                fprintf(stderr,"1 was marked duplicate due to higher fileptr\n");
+                        en2->flags |= 0x400;
+                        en2->flags |= 0x8000;
+                        return -1;
+                    }
+                    else if(tmp1 > tmp2){
+                        if(sort_verbose >= 5){
+                            fprintf(stderr,"1 was marked duplicate due to higher sorted_position\n");
+                        }
+                        en1->flags |= 0x400;
+                        en1->flags |= 0x8000;
+                        return 1;
+                    }
+                    else{
+                        if(((en1->flags & 0x40) == (en2->flags & 0x40))){
+
+                            memcpy(&tmp1,en1->fileptr,5*sizeof(uint8_t));
+                            memcpy(&tmp2,en1->fileptr,5*sizeof(uint8_t));
+
+                            if(tmp1 < tmp2){
+                                if(sort_verbose >= 5){
+                                    fprintf(stderr,"2 was marked duplicate due to higher fileptr\n");
+                                }
+                                en2->flags |= 0x400;
+                                en2->flags |= 0x8000;
+                                return -1;
                             }
-                            en1->flags |= 0x400;
-                            en1->flags |= 0x8000;
-                            return 1;
+                            else {
+                                if(sort_verbose >= 5){
+                                    fprintf(stderr,"1 was marked duplicate due to higher fileptr\n");
+                                }
+                                en1->flags |= 0x400;
+                                en1->flags |= 0x8000;
+                                return 1;
+                            }
+                        }
+                        else{
+                            return 0;
                         }
                     }
                 }
+                else{
+                    if(sort_verbose >= 5){
+                        fprintf(stderr,"2 was marked duplicate due to lower avg_qual\n");
+                    }
+                    en2->flags |= 0x400;
+                    en2->flags |= 0x8000;
+                    // l_en2 is duplicate
+                    return -1;
+                }
             }
             else{
-                if(sort_verbose >= 5){
-                    fprintf(stderr,"2 was marked duplicate due to lower avg_qual\n");
-                }
-                en2->flags |= 0x400;
-                en2->flags |= 0x8000;
-                // l_en2 is duplicate
-                return -1;
+                return 0;
             }
         }
         else{
@@ -718,86 +730,99 @@ int is_duplicate_seq_en(bseq1s_t * en1, half_mt_entry * en2, int rev, int64_t re
         }
 
         // en1 is not properly paired or en2 is properly paired
-        if(((en1->flags & 0x10) == (en2->flags & 0x10)) && ((en1->flags & 0x20) == (en2->flags & 0x20))){
-            if(en1->avg_qual < en2->avg_qual){
-                // l_en1 is the duplicate
-                if(sort_verbose >= 5){
-                    fprintf(stderr,"1 was marked duplicate due to low avg_qual\n");
-                }
-                en1->flags |= 0x400;
-                en1->flags |= 0x8000;
+        if(((en1->flags & 0x10) == (en2->flags & 0x10))){
 
-                return 1;
-            }
-            else if(en1->avg_qual == en2->avg_qual){
-                // Avg quality scores are the same
+            //check if mate is mapped and compare mate positions only if mate is unmapped
+            
+            if((((en1->flags & 0x8) == 0) && ((en2->flags & 0x8) == 0) && ((en1->flags & 0x20) == (en2->flags & 0x20))) || ((en1->flags & 0x8) != 0) || ((en2->flags & 0x8) != 0)){
 
-                // Check relative positions now
 
-                if(rev == 1){
-                    tmp1 = ref_pos - en1->correction;
-                    tmp2 = ref_pos - en2->correction; 
-                }
-                else{
-                    tmp1 = ref_pos + en1->correction;
-                    tmp2 = ref_pos + en2->correction; 
-                }
+                // if both entries have mapped mates, then check the orientations of the mate
+                // otherwise ignore mate orientation
 
-                if(tmp1 < tmp2){
-                    //en2 is a duplicate
+                if(en1->avg_qual < en2->avg_qual){
+                    // l_en1 is the duplicate
                     if(sort_verbose >= 5){
-                        fprintf(stderr,"2 was marked duplicate due to higher sorted_position\n");
-                    }
-                    en2->flags |= 0x400;
-                    en2->flags |= 0x8000;
-                    return -1;
-                }
-                else if(tmp1 > tmp2){
-                    if(sort_verbose >= 5){
-                        fprintf(stderr,"1 was marked duplicate due to higher sorted_position\n");
+                        fprintf(stderr,"1 was marked duplicate due to low avg_qual\n");
                     }
                     en1->flags |= 0x400;
                     en1->flags |= 0x8000;
+
                     return 1;
                 }
-                else{
+                else if(en1->avg_qual == en2->avg_qual){
+                    // Avg quality scores are the same
 
-                    // Sorted positions are also the same now compare position in pair
+                    // Check relative positions now
 
-                    if(((en1->flags & 0x40) == (en2->flags & 0x40))){
-                        memcpy(&tmp1,en1->fileptr,5*sizeof(uint8_t));
-                        memcpy(&tmp1,en1->fileptr,5*sizeof(uint8_t));
-
-                        if(tmp1 < tmp2){
-                            if(sort_verbose >= 5){
-                                fprintf(stderr,"2 was marked duplicate due to higher fileptr\n");
-                            }
-                            en2->flags |= 0x400;
-                            en2->flags |= 0x8000;
-                            return -1;
-                        }
-                        else {
-                            if(sort_verbose >= 5){
-                                fprintf(stderr,"1 was marked duplicate due to higher fileptr\n");
-                            }
-                            en1->flags |= 0x400;
-                            en1->flags |= 0x8000;
-                            return 1;
-                        }
+                    if(rev == 1){
+                        tmp1 = ref_pos - en1->correction;
+                        tmp2 = ref_pos - en2->correction; 
                     }
                     else{
-                        return 0;
+                        tmp1 = ref_pos + en1->correction;
+                        tmp2 = ref_pos + en2->correction; 
                     }
+
+                    if(tmp1 < tmp2){
+                        //en2 is a duplicate
+                        if(sort_verbose >= 5){
+                            fprintf(stderr,"2 was marked duplicate due to higher sorted_position\n");
+                        }
+                        en2->flags |= 0x400;
+                        en2->flags |= 0x8000;
+                        return -1;
+                    }
+                    else if(tmp1 > tmp2){
+                        if(sort_verbose >= 5){
+                            fprintf(stderr,"1 was marked duplicate due to higher sorted_position\n");
+                        }
+                        en1->flags |= 0x400;
+                        en1->flags |= 0x8000;
+                        return 1;
+                    }
+                    else{
+
+                        // Sorted positions are also the same now compare position in pair
+                        if(((en1->flags & 0x40) == (en2->flags & 0x40))){
+
+                            memcpy(&tmp1,en1->fileptr,5*sizeof(uint8_t));
+                            memcpy(&tmp1,en1->fileptr,5*sizeof(uint8_t));
+
+                            if(tmp1 < tmp2){
+                                if(sort_verbose >= 5){
+                                    fprintf(stderr,"2 was marked duplicate due to higher fileptr\n");
+                                }
+                                en2->flags |= 0x400;
+                                en2->flags |= 0x8000;
+                                return -1;
+                            }
+                            else {
+                                if(sort_verbose >= 5){
+                                    fprintf(stderr,"1 was marked duplicate due to higher fileptr\n");
+                                }
+                                en1->flags |= 0x400;
+                                en1->flags |= 0x8000;
+                                return 1;
+                            }
+                        }
+                        else{
+                            return 0;
+                        }
+                    }
+                }
+                else{
+                    if(sort_verbose >= 5){
+                        fprintf(stderr,"2 was marked duplicate due to lower avg_qual\n");
+                    }
+                    en2->flags |= 0x400;
+                    en2->flags |= 0x8000;
+                    // l_en2 is duplicate
+                    return -1;
                 }
             }
             else{
-                if(sort_verbose >= 5){
-                    fprintf(stderr,"2 was marked duplicate due to lower avg_qual\n");
-                }
-                en2->flags |= 0x400;
-                en2->flags |= 0x8000;
-                // l_en2 is duplicate
-                return -1;
+                return 0;
             }
         }
         else{
