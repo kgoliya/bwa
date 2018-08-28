@@ -110,6 +110,7 @@ void write_entry(bseq1s_t * seq, half_mt_entry * in_en){
     in_en->avg_qual = seq->avg_qual;
     in_en->flags = seq->flags;
     in_en->mate_diff = seq->mate_diff;
+    in_en->ref_pos = seq->abs_pos;
     return;
 }
 
@@ -121,6 +122,7 @@ void copy_entry(half_mt_entry * src_en, half_mt_entry * dest_en){
     dest_en->avg_qual = src_en->avg_qual;
     dest_en->flags = src_en->flags;
     dest_en->mate_diff = src_en->mate_diff;
+    dest_en->ref_pos = src_en->ref_pos;
     dest_en->mate = src_en->mate;
 
     // Also go back to the mates position and change it to reflect dest pointer and not source ptr
@@ -229,6 +231,7 @@ half_mt_entry * add_mt_entry(bseq1s_t *seq, sort_struct_t * sld){
     
     
     int is_rev = seq->is_rev;
+    int dup = 0;
     int64_t tmp1 = 0;
     int64_t tmp2 = 0;
     
@@ -297,82 +300,39 @@ half_mt_entry * add_mt_entry(bseq1s_t *seq, sort_struct_t * sld){
             }
 
         }
-        else if(((sort_en->flags & 0x02) != 0) && ((seq->flags & 0x02) != 0)){
+        else {
+            // Both entries are not unmapped or secondary alignments
             // Both entries are properly paired
-            if(sort_en->mate_diff == seq->mate_diff){
-                if(sort_en->avg_qual < seq->avg_qual){
-                    sort_en->flags |= 0x400;            // Duplicate marked
-                    sort_en->flags |= 0x8000;           // Entry processed
-                    add_ot_entry_from_mt(seq->abs_pos,sort_en, sld);
-                    write_entry(seq,sort_en);
-                }
-                else if(sort_en->avg_qual > seq->avg_qual){
-                    // Seq is the duplicate entry
-                    seq->flags |= 0x400;
-                    seq->flags |= 0x8000;
-                    sort_en = add_ot_entry(seq,sld);
-                }
-                else{
-                    sort_en = add_ot_entry(seq,sld);
-                }
-            }
-            else{
+            dup = is_duplicate_seq_en(seq, sort_en,is_rev, seq->abs_pos);
+
+            if(dup == 1){
+                // seq is the duplicate
+                // place seq in the overflow table
                 sort_en = add_ot_entry(seq,sld);
             }
-        }
-        else if(((sort_en->flags & 0x02) == 0) && ((seq->flags & 0x02) != 0)){
-            // If sort_en is not properly paired and seq is properly paired
-            // Put sort_en in overflow table
-            if(sort_en->avg_qual <= seq->avg_qual){
-                sort_en->flags |= 0x400; 
-                sort_en->flags |= 0x8000;
-            }
-            add_ot_entry_from_mt(seq->abs_pos,sort_en, sld);
-            write_entry(seq,sort_en);
-        }
-        else if(((seq->flags & 0x02) == 0) && ((sort_en->flags & 0x02) != 0)){
-            // Seq is not properly paired but sort_en is properly paired
-             if(seq->avg_qual <= sort_en->avg_qual){
-                 seq->flags |= 0x400;
-                 seq->flags |= 0x8000;
-             }
-             sort_en = add_ot_entry(seq,sld);
-        }
-        else{
-            // Both are not properly paired
-            if(seq->avg_qual < sort_en->avg_qual){
-                seq->flags |= 0x400;
-                seq->flags |= 0x8000;
-                sort_en = add_ot_entry(seq,sld);
-            }
-            else if(seq->avg_qual > sort_en->avg_qual){
-                sort_en->flags |= 0x400;            // Duplicate marked
-                sort_en->flags |= 0x8000;           // Entry processed
+            else if(dup == -1){
+                // sort_en is the duplicate, 
+                // place sort_en in overflow table
                 add_ot_entry_from_mt(seq->abs_pos,sort_en, sld);
                 write_entry(seq,sort_en);
             }
-            else{
-                // Check for sorted position now
-                if(seq->is_rev){
-                    tmp1 = seq->abs_pos - seq->correction;
-                    tmp2 = seq->abs_pos - sort_en->correction;
-                }
-                else{
-                    tmp1 = seq->abs_pos + seq->correction;
-                    tmp2 = seq->abs_pos + sort_en->correction;
-                }
-                if(tmp1 < tmp2){
-                    // sort_en is the duplicate
-                    sort_en->flags |= 0x400;
-                    sort_en->flags |= 0x8000;
+            else if(dup == 2){
+                // seq or sort_en was a duplicate previously
+                if((sort_en->flags & 0x400) != 0){
+                    // sort_en was the duplicate, 
+                    // place sort_en in overflow table
                     add_ot_entry_from_mt(seq->abs_pos,sort_en, sld);
                     write_entry(seq,sort_en);
                 }
                 else{
-                    seq->flags |= 0x400;
-                    seq->flags |= 0x8000;
+                    // seq was marked as duplicate
+                    // place seq in overflow table
                     sort_en = add_ot_entry(seq,sld);
                 }
+            }
+            else{
+                // No decision taken, place seq in overflow table
+                sort_en = add_ot_entry(seq,sld);
             }
         }
     }
@@ -439,13 +399,229 @@ int lexicographic_comparator(char * str0, int len0, char * str1, int len1){
     return decision;
 }
 
+void print_mt_entry(half_mt_entry * en1, half_mt_entry * en2){
+    int64_t f1 = 0,f2 = 0;
+    memcpy(&f1,en1->fileptr,5*sizeof(uint8_t));
+    memcpy(&f2,en2->fileptr,5*sizeof(uint8_t));
+    fprintf(stderr,"Ref_pos : %ld\t|\tRef_pos : %ld\n",en1->ref_pos,en2->ref_pos);
+    fprintf(stderr,"Fileptr : %ld\t\t|\tFileptr : %ld\n",f1,f2);
+    fprintf(stderr,"Corr : %d\t\t|\tCorr : %d\n",en1->correction,en2->correction);
+    fprintf(stderr,"Avg_qual : %d\t\t|\tAvg_qual : %d\n",en1->avg_qual,en2->avg_qual);
+    fprintf(stderr,"Flags : %d\t\t|\tFlags : %d\n",(en1->flags & 0xfff),(en2->flags & 0xfff));
+    fprintf(stderr,"Mate diff : %d\t\t|\tMate diff : %d\n",en1->mate_diff,en2->mate_diff);
+
+}
+
+void print_seq_mt_entry(bseq1s_t * en1, half_mt_entry * en2){
+    int64_t f1 = 0,f2 = 0;
+    memcpy(&f1,en1->fileptr,5*sizeof(uint8_t));
+    memcpy(&f2,en2->fileptr,5*sizeof(uint8_t));
+    fprintf(stderr,"Ref_pos : %ld\t|\tRef_pos : %ld\n",en1->abs_pos,en2->ref_pos);
+    fprintf(stderr,"Fileptr : %ld\t\t|\tFileptr : %ld\n",f1,f2);
+    fprintf(stderr,"Corr : %d\t\t|\tCorr : %d\n",en1->correction,en2->correction);
+    fprintf(stderr,"Avg_qual : %d\t\t|\tAvg_qual : %d\n",en1->avg_qual,en2->avg_qual);
+    fprintf(stderr,"Flags : %d\t\t|\tFlags : %d\n",(en1->flags & 0xfff),(en2->flags & 0xfff));
+    fprintf(stderr,"Mate diff : %d\t\t|\tMate diff : %d\n",en1->mate_diff,en2->mate_diff);
+}
+
+
 
 // Return value :
 // 0 : no decision for marking duplicates
 // 1 : l_en1 is marked as duplicate
 // -1: l_en2 is marked as duplicate
 // 2 : Exit due to inputs being duplicates or secondary alignments
-int is_duplicate(half_mt_entry * en1, half_mt_entry * en2, int rev, int64_t ref_pos){
+
+
+int is_duplicate_ens(half_mt_entry * en1, half_mt_entry * en2, int rev, int64_t ref_pos){
+   
+    int64_t tmp1 = 0;
+    int64_t tmp2 = 0;
+
+    if(((en1->flags & 0x400) != 0) || ((en2->flags & 0x400) != 0) || ((en1->flags & 0x100) != 0) || ((en2->flags & 0x100) != 0) || ((en1->flags & 0x4) != 0) || ((en2->flags & 0x4) != 0)){
+        // either entry is a duplicate or a secondary alignment or a unmapped read
+        return 2;
+    }
+
+
+    if(((en1->flags & 0x02) != 0) && ((en2->flags & 0x02) != 0)){
+        // Both reads are properly paired
+        // Should have mates
+        // Check mate as well
+        
+        half_mt_entry * en1_m = (half_mt_entry *) en1->mate;
+        half_mt_entry * en2_m = (half_mt_entry *) en2->mate;
+        if(sort_verbose >= 5){
+            fprintf(stderr,"------------------------------------------\n");
+            print_mt_entry(en1,en2);
+            fprintf(stderr,"===========================================\n");
+            print_mt_entry(en1_m,en2_m);
+        }
+
+        if((en1->mate_diff == en2->mate_diff) && ((en1->flags & 0x10) == (en2->flags & 0x10)) && ((en1->flags & 0x40) == (en2->flags & 0x40))){
+            // Mate diff is the same
+            // Check the mates position now
+            if((en1_m->ref_pos == en2_m->ref_pos) && ((en1_m->flags & 0x10) == (en2_m->flags & 0x10))){
+                // mates position match and they have the same orientation
+
+                if(en1->avg_qual < en2->avg_qual && en1_m->avg_qual < en2_m->avg_qual){
+                    // en1 is a duplicate
+                    if(sort_verbose >= 5){
+                        fprintf(stderr,"1 was marked duplicate along with mate due to low avg_qual\n");
+                    }
+                    en1->flags |= 0x400;
+                    en1->flags |= 0x8000;
+                    en1_m->flags |= 0x400;
+                    en1_m->flags |= 0x8000;
+                    return 1;
+                }
+                else if(en2->avg_qual < en1->avg_qual && en2_m->avg_qual < en1_m->avg_qual){
+                    if(sort_verbose >= 5){
+                        fprintf(stderr,"2 was marked duplicate along with mate due to low avg_qual\n");
+                    }
+                    // en2 is the duplicate
+                    en2->flags |= 0x400;
+                    en2->flags |= 0x8000;
+                    en2_m->flags |= 0x400;
+                    en2_m->flags |= 0x8000;
+                    return -1;
+                }
+                else{
+                    // Check the fileptrs, the larger one is marked as the duplicate
+                    memcpy(&tmp1,en1->fileptr,5*sizeof(uint8_t));
+                    memcpy(&tmp2,en2->fileptr,5*sizeof(uint8_t));
+
+                    if(tmp1 < tmp2){
+                        if(sort_verbose >= 5){
+                            fprintf(stderr,"2 was marked duplicate along with mate due to higher fileptr\n");
+                        }
+                        en2->flags |= 0x400;
+                        en2->flags |= 0x8000;
+                        en2_m->flags |= 0x400;
+                        en2_m->flags |= 0x8000;
+                        return -1;
+                    }
+                    else {
+                        if(sort_verbose >= 5){
+                            fprintf(stderr,"1 was marked duplicate along with mate due to higher fileptr\n");
+                        }
+                        en1->flags |= 0x400;
+                        en1->flags |= 0x8000;
+                        en1_m->flags |= 0x400;
+                        en1_m->flags |= 0x8000;
+                        return -1;
+                    }
+                }
+            }
+            else{
+                return 0;
+            }
+        }
+        else{
+            // Mate diff are different, report no decision
+            return 0;
+        }
+
+    }
+    else {
+        if(sort_verbose >= 5){
+            fprintf(stderr,"------------------------------------------\n");
+            print_mt_entry(en1,en2);
+        }
+        // en1 is not properly paired or en2 is properly paired
+        // Check orientation of the read, orientation of mate
+        if(((en1->flags & 0x10) == (en2->flags & 0x10)) && ((en1->flags & 0x20) == (en2->flags & 0x20))){
+            if(en1->avg_qual < en2->avg_qual){
+                // l_en1 is the duplicate
+                if(sort_verbose >= 5){
+                    fprintf(stderr,"1 was marked duplicate due to lower avg_qual\n");
+                }
+                en1->flags |= 0x400;
+                en1->flags |= 0x8000;
+
+                return 1;
+            }
+            else if(en1->avg_qual == en2->avg_qual){
+                // Avg quality scores are the same
+
+                // Check relative positions now
+
+                if(rev == 1){
+                    tmp1 = ref_pos - en1->correction;
+                    tmp2 = ref_pos - en2->correction; 
+                }
+                else{
+                    tmp1 = ref_pos + en1->correction;
+                    tmp2 = ref_pos + en2->correction; 
+                }
+
+                if(tmp1 < tmp2){
+                    //en2 is a duplicate
+                    if(sort_verbose >= 5){
+                        fprintf(stderr,"2 was marked duplicate due to higher sorted_position\n");
+                    }
+                    en2->flags |= 0x400;
+                    en2->flags |= 0x8000;
+                    return -1;
+                }
+                else if(tmp1 > tmp2){
+                    if(sort_verbose >= 5){
+                        fprintf(stderr,"1 was marked duplicate due to higher sorted_position\n");
+                    }
+                    en1->flags |= 0x400;
+                    en1->flags |= 0x8000;
+                    return 1;
+                }
+                else{
+                    if(((en1->flags & 0x40) == (en2->flags & 0x40))){
+                        memcpy(&tmp1,en1->fileptr,5*sizeof(uint8_t));
+                        memcpy(&tmp2,en1->fileptr,5*sizeof(uint8_t));
+
+                        if(tmp1 < tmp2){
+                            if(sort_verbose >= 5){
+                                fprintf(stderr,"2 was marked duplicate due to higher fileptr\n");
+                            }
+                            en2->flags |= 0x400;
+                            en2->flags |= 0x8000;
+                            return -1;
+                        }
+                        else {
+                            if(sort_verbose >= 5){
+                                fprintf(stderr,"1 was marked duplicate due to higher fileptr\n");
+                            }
+                            en1->flags |= 0x400;
+                            en1->flags |= 0x8000;
+                            return 1;
+                        }
+                    }
+                }
+            }
+            else{
+                if(sort_verbose >= 5){
+                    fprintf(stderr,"2 was marked duplicate due to lower avg_qual\n");
+                }
+                en2->flags |= 0x400;
+                en2->flags |= 0x8000;
+                // l_en2 is duplicate
+                return -1;
+            }
+        }
+        else{
+            return 0;
+        }
+
+    }
+
+    return 0;
+}
+
+// Return value :
+// 0 : no decision for marking duplicates
+// 1 : l_en1 is marked as duplicate
+// -1: l_en2 is marked as duplicate
+// 2 : Exit due to inputs being duplicates or secondary alignments
+
+int is_duplicate_seq_en(bseq1s_t * en1, half_mt_entry * en2, int rev, int64_t ref_pos){
    
     int64_t tmp1 = 0;
     int64_t tmp2 = 0;
@@ -454,134 +630,184 @@ int is_duplicate(half_mt_entry * en1, half_mt_entry * en2, int rev, int64_t ref_
         // either entry is a duplicate or a secondary alignment
         return 2;
     }
-    if((en1->flags & 0x10) == (en2->flags & 0x10)){
-        // Both entries have the same orientation
 
-        if((en1->flags & 0x02) == 0){
-            // Not properly paired
 
-            if((en2->flags & 0x02) != 0){
-                // en2 is properly paired
-                if(en1->avg_qual <= en2->avg_qual){
-                    // l_en1 is duplicate
+    if(((en1->flags & 0x02) != 0) && ((en2->flags & 0x02) != 0)){
+        // Both reads are properly paired
+        // Should have mates
+        // Check mate as well
+        
+        bseq1s_t * en1_m = (bseq1s_t *) en1->mate;
+        half_mt_entry * en2_m = (half_mt_entry *) en2->mate;
+        if(sort_verbose >= 5){
+            fprintf(stderr,"------------------------------------------\n");
+            print_seq_mt_entry(en1,en2);
+            fprintf(stderr,"===========================================\n");
+            print_seq_mt_entry(en1_m,en2_m);
+        }
+
+        if(en1->mate_diff == en2->mate_diff && ((en1->flags & 0x10) == (en2->flags & 0x10)) && ((en1->flags & 0x40) == (en2->flags & 0x40))){
+            // Mate diff is the same
+            // Check the mates position now
+            if((en1_m->abs_pos == en2_m->ref_pos) && ((en1_m->flags & 0x10) == (en2_m->flags & 0x10))){
+                // mates position match and they have the same orientation
+
+                if(en1->avg_qual < en2->avg_qual && en1_m->avg_qual < en2_m->avg_qual){
+                    // en1 is a duplicate
+                    if(sort_verbose >= 5){
+                        fprintf(stderr,"1 was marked duplicate along with mate due to low avg_qual\n");
+                    }
+                    en1->flags |= 0x400;
+                    en1->flags |= 0x8000;
+                    en1_m->flags |= 0x400;
+                    en1_m->flags |= 0x8000;
                     return 1;
                 }
+                else if(en2->avg_qual < en1->avg_qual && en2_m->avg_qual < en1_m->avg_qual){
+                    // en2 is the duplicate
+                    if(sort_verbose >= 5){
+                        fprintf(stderr,"2 was marked duplicate along with mate due to low avg_qual\n");
+                    }
+                    en2->flags |= 0x400;
+                    en2->flags |= 0x8000;
+                    en2_m->flags |= 0x400;
+                    en2_m->flags |= 0x8000;
+                    return -1;
+                }
                 else{
-                    return 0;
+                    // Check the fileptrs, the larger one is marked as the duplicate
+                    memcpy(&tmp1,en1->fileptr,5*sizeof(uint8_t));
+                    memcpy(&tmp2,en2->fileptr,5*sizeof(uint8_t));
+
+                    if(tmp1 < tmp2){
+                        if(sort_verbose >= 5){
+                            fprintf(stderr,"2 was marked duplicate along with mate due to high fileptr\n");
+                        }
+                        en2->flags |= 0x400;
+                        en2->flags |= 0x8000;
+                        en2_m->flags |= 0x400;
+                        en2_m->flags |= 0x8000;
+                        return -1;
+                    }
+                    else {
+                        if(sort_verbose >= 5){
+                            fprintf(stderr,"1 was marked duplicate along with mate due to high fileptr\n");
+                        }
+                        en1->flags |= 0x400;
+                        en1->flags |= 0x8000;
+                        en1_m->flags |= 0x400;
+                        en1_m->flags |= 0x8000;
+                        return 1;
+                    }
                 }
             }
             else{
-                // en2 is not properly paired
-                if(en1->avg_qual < en2->avg_qual){
-                    // l_en1 is the duplicate
-                    return 1;
-                }
-                else if(en1->avg_qual == en2->avg_qual){
-                    // Avg quality scores are the same
-                    
-                    // Check relative positions now
-                    //
-                    
-                    if(rev == 1){
-                        tmp1 = ref_pos - en1->correction;
-                        tmp2 = ref_pos - en2->correction; 
-                    }
-                    else{
-                        tmp1 = ref_pos + en1->correction;
-                        tmp2 = ref_pos + en2->correction; 
-                    }
-                    
-                    if(tmp1 < tmp2){
-                        //en2 is a duplicate
-                        return -1;
-                    }
-                    else if(tmp1 > tmp2){
-                        return 1;
-                    }
-                    else{
-                        memcpy(&tmp1,en1->fileptr,5*sizeof(uint8_t));
-                        memcpy(&tmp1,en1->fileptr,5*sizeof(uint8_t));
-
-                        if(tmp1 < tmp2){
-                            return 1;
-                        }
-                        else {
-                            return -1;
-                        }
-                    }
-                }
-                else{
-                    // l_en2 is duplicate
-                    return -1;
-                }
-
+                return 0;
             }
-
         }
         else{
-            if((en2->flags & 0x02) != 0){
-                // both are paired correctly
-                if(en1->mate_diff == en2->mate_diff){
-                    // mates match
-                    if(en1->avg_qual < en2->avg_qual){
-                        // en1 is the duplicate
-                        return 1;
-                    }
-                    else if(en1->avg_qual > en2->avg_qual){
-                        // l_en2 is duplicate
-                        return -1;
-                    }
-                    else{
-                        // quality scores are equal
-                        if(rev == 1){
-                            tmp1 = ref_pos - en1->correction;
-                            tmp2 = ref_pos - en2->correction; 
-                        }
-                        else{
-                            tmp1 = ref_pos + en1->correction;
-                            tmp2 = ref_pos + en2->correction; 
-                        }
+            // Mate diff are different or orientation is different, report no decision
+            return 0;
+        }
 
-                        if(tmp1 < tmp2){
-                            //en2 is a duplicate
-                            return -1;
-                        }
-                        else if(tmp1 > tmp2){
-                            return 1;
-                        }
-                        else{
-                            memcpy(&tmp1,en1->fileptr,5*sizeof(uint8_t));
-                            memcpy(&tmp1,en1->fileptr,5*sizeof(uint8_t));
+    }
+    else {
+        if(sort_verbose >= 5){
+            fprintf(stderr,"------------------------------------------\n");
+            print_seq_mt_entry(en1,en2);
+        }
 
-                            if(tmp1 < tmp2){
-                                return 1;
-                            }
-                            else {
-                                return -1;
-                            }
-                        }
-                    }
+        // en1 is not properly paired or en2 is properly paired
+        if(((en1->flags & 0x10) == (en2->flags & 0x10)) && ((en1->flags & 0x20) == (en2->flags & 0x20))){
+            if(en1->avg_qual < en2->avg_qual){
+                // l_en1 is the duplicate
+                if(sort_verbose >= 5){
+                    fprintf(stderr,"1 was marked duplicate due to low avg_qual\n");
+                }
+                en1->flags |= 0x400;
+                en1->flags |= 0x8000;
+
+                return 1;
+            }
+            else if(en1->avg_qual == en2->avg_qual){
+                // Avg quality scores are the same
+
+                // Check relative positions now
+
+                if(rev == 1){
+                    tmp1 = ref_pos - en1->correction;
+                    tmp2 = ref_pos - en2->correction; 
                 }
                 else{
-                    // mates do not match
-                    return 0;
+                    tmp1 = ref_pos + en1->correction;
+                    tmp2 = ref_pos + en2->correction; 
+                }
+
+                if(tmp1 < tmp2){
+                    //en2 is a duplicate
+                    if(sort_verbose >= 5){
+                        fprintf(stderr,"2 was marked duplicate due to higher sorted_position\n");
+                    }
+                    en2->flags |= 0x400;
+                    en2->flags |= 0x8000;
+                    return -1;
+                }
+                else if(tmp1 > tmp2){
+                    if(sort_verbose >= 5){
+                        fprintf(stderr,"1 was marked duplicate due to higher sorted_position\n");
+                    }
+                    en1->flags |= 0x400;
+                    en1->flags |= 0x8000;
+                    return 1;
+                }
+                else{
+
+                    // Sorted positions are also the same now compare position in pair
+
+                    if(((en1->flags & 0x40) == (en2->flags & 0x40))){
+                        memcpy(&tmp1,en1->fileptr,5*sizeof(uint8_t));
+                        memcpy(&tmp1,en1->fileptr,5*sizeof(uint8_t));
+
+                        if(tmp1 < tmp2){
+                            if(sort_verbose >= 5){
+                                fprintf(stderr,"2 was marked duplicate due to higher fileptr\n");
+                            }
+                            en2->flags |= 0x400;
+                            en2->flags |= 0x8000;
+                            return -1;
+                        }
+                        else {
+                            if(sort_verbose >= 5){
+                                fprintf(stderr,"1 was marked duplicate due to higher fileptr\n");
+                            }
+                            en1->flags |= 0x400;
+                            en1->flags |= 0x8000;
+                            return 1;
+                        }
+                    }
+                    else{
+                        return 0;
+                    }
                 }
             }
             else{
-                // en1 is properly paired but en2 is not properly paired
-                if(en2->avg_qual <= en1->avg_qual){
-                    // l_en2 is duplicate
-                    return -1;
+                if(sort_verbose >= 5){
+                    fprintf(stderr,"2 was marked duplicate due to lower avg_qual\n");
                 }
-                else{
-                    return 0;
-                }
+                en2->flags |= 0x400;
+                en2->flags |= 0x8000;
+                // l_en2 is duplicate
+                return -1;
             }
         }
+        else{
+            return 0;
+        }
+
     }
+
     return 0;
 }
-
 
 
 int md_comparator(const void **p, const void **q) 
@@ -740,6 +966,13 @@ bseq1s_t * get_sam_record(char * line, size_t line_size,uint64_t fileptr){
 
     get_record(line, line_size, &flags, &chr_num, &pos, &fcorr, &rcorr,&avg_qual, &mate_diff);
 
+
+    /*if(sort_verbose >= 3){
+        fprintf(stderr,"%s",line);
+        fprintf(stderr,"Fileptr ; %ld\n",fileptr);
+        fprintf(stderr,"-----------------------------------------\n");
+    }*/
+
     if(sort_verbose >= 10){
         fprintf(stderr,"[Generated] Flags : %d, chr_num : %d, pos : %ld, fcorr : %d, rcorr : %d, avg_qual : %d, mate_diff : %d\n",(flags & 0xFFF),chr_num,pos,fcorr,rcorr,avg_qual,mate_diff); 
     }
@@ -858,6 +1091,7 @@ int count_duplicates_from_table(sort_struct_t * sld){
 
 void mark_duplicates_in_ot(ot_entry ** ot, int64_t len, int rev){
     int64_t i,j = 0;
+    int64_t new_i = 0;
     int update_i = 1;
     ot_entry * e1 = 0;
     ot_entry * e2 = 0;
@@ -876,36 +1110,32 @@ void mark_duplicates_in_ot(ot_entry ** ot, int64_t len, int rev){
             if((e1->ref_pos != e2->ref_pos)){
                 // Crossed over into another ref_pos territory without seeing entries in between that were not duplicates
                 if(update_i == 1){
-                    i = j;
+                    new_i = j;
                 }
                 break;
             }
             else{
                 // Check for duplicates here
-                dup = is_duplicate(&e1->ote, &e2->ote, rev, e1->ref_pos);
+                dup = is_duplicate_ens(&e1->ote, &e2->ote, rev, e1->ref_pos);
                 if(dup == 1){
                     // Restart run from i + 1;
-                    e1->ote.flags |= 0x400;
-                    e1->ote.flags |= 0x8000;
-                    i = i + 1;
+                    new_i = i + 1;
                     break;
                 }
                 else if(dup == -1){
-                    e2->ote.flags |= 0x400;
-                    e2->ote.flags |= 0x8000;
                     if(update_i == 1){
-                        i = j;
+                        new_i = j;
                     }
                 }
                 else if(dup == 2){
-                    // en2 is a secondary alignment
+                    // en2 is a secondary alignment or an unmapped read
                     if(update_i == 1){
-                        i = j;
+                        new_i = j;
                     }
                 }
                 else{
                     if(update_i == 1){
-                        i = j;
+                        new_i = j;
                         // No decision, current entry at j might be a valid entry
                         update_i = 0;
                     }
@@ -914,67 +1144,19 @@ void mark_duplicates_in_ot(ot_entry ** ot, int64_t len, int rev){
             
         }
 
+        i = new_i;
     }
 
 
 }
 
 void mark_duplicates(sort_struct_t * sld){
-    mark_duplicates_in_ot(sld->fot, sld->fot_length, 0);
-    mark_duplicates_in_ot(sld->rot, sld->rot_length, 1);
-
-    // Go through all entries and check if they are duplicates,
-    // If they are duplicates, then check their mates. 
-    //          if their mates are also, duplicates, then they are valid duplicates
-    //          if their mates are not duplicates, remove the duplicate flag from their flag vector
-
-    int64_t i = 0;
-    half_mt_entry * mate;
-
-    for(i = 0;i<sld->fot_length;i++){
-        if((sld->fot[i]->ote.flags & 0x400) != 0){
-            // entry is a duplicate
-            
-            //check if entry is properly paired
-            if(((sld->fot[i]->ote.flags & 0x2) != 0) && ((sld->fot[i]->ote.flags & 0x100) == 0)){
-                // Entry is properly paired and is not a secondary alignment
-                // it should have a mate
-                mate = (half_mt_entry * )sld->fot[i]->ote.mate;
-                if((mate->flags & 0x400) != 0){
-                    // Do nothing
-                    continue;
-                }
-                else{
-                    // mate is not a duplicate
-                    sld->fot[i]->ote.flags &= 0xFBFF;       // 1111_1011_1111_1111
-                }
-
-            }
-        }
+    if(sld->fot_length > 0){
+        mark_duplicates_in_ot(sld->fot, sld->fot_length, 0);
     }
-    for(i = 0;i<sld->rot_length;i++){
-        if((sld->rot[i]->ote.flags & 0x400) != 0){
-            // entry is a duplicate
-            
-            //check if entry is properly paired
-            if(((sld->rot[i]->ote.flags & 0x2) != 0) && ((sld->rot[i]->ote.flags & 0x100) == 0)){
-                // Entry is properly paired and is not a secondary alignment
-                // it should have a mate
-                mate = (half_mt_entry * )sld->rot[i]->ote.mate;
-                if((mate->flags & 0x400) != 0){
-                    // Do nothing
-                    continue;
-                }
-                else{
-                    // mate is not a duplicate
-                    sld->rot[i]->ote.flags &= 0xFBFF;       // 1111_1011_1111_1111
-                }
-
-            }
-        }
+    if(sld->rot_length > 0){
+        mark_duplicates_in_ot(sld->rot, sld->rot_length, 1);
     }
-
-
 }
 
 
@@ -1740,7 +1922,8 @@ void sort_MT(char * in_sam_filename,char * out_sam_filename,int num_threads, int
                         // The mate should go to the same chromosome and also be properly paired and not a secondary alignment;
 
                         if(((m->flags & 0x2) != 0) && ((m->flags & 0x100) == 0)){
-                            s->mate = m;
+                            s->mate = (void *)m;
+                            m->mate = (void *)s;
                             break; 
                         }
                         else{

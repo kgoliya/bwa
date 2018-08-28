@@ -16,6 +16,7 @@ typedef struct {
     // Bit 13: valid(0x2000)
     uint16_t flags;
     uint16_t mate_diff;
+    int64_t ref_pos;
 
     // mate entry's pointer
     void * mate;
@@ -29,7 +30,7 @@ typedef struct {
 
 typedef struct {
     half_mt_entry ote;
-    int64_t ref_pos;    // Not corrected with CIGAR            
+    int64_t ref_pos;    
 } ot_entry;
 
 typedef struct {
