@@ -223,7 +223,7 @@ void add_ot_entry_from_mt(int64_t ref_pos,half_mt_entry * in_en, sort_struct_t *
 }
 
 
-half_mt_entry * add_mt_entry(bseq1s_t *seq, sort_struct_t * sld){
+half_mt_entry * add_mt_entry(bseq1s_t *seq, sort_struct_t * sld, half_mt_entry * mate){
 
 
     half_mt_entry ** sort_en_add;
@@ -243,7 +243,6 @@ half_mt_entry * add_mt_entry(bseq1s_t *seq, sort_struct_t * sld){
     }
 
     
-
 
     if(*sort_en_add == NULL){
         *sort_en_add = (half_mt_entry *) malloc(sizeof(half_mt_entry));
@@ -302,8 +301,12 @@ half_mt_entry * add_mt_entry(bseq1s_t *seq, sort_struct_t * sld){
         }
         else {
             // Both entries are not unmapped or secondary alignments
-            // Both entries are properly paired
-            dup = is_duplicate_seq_en(seq, sort_en,is_rev, seq->abs_pos);
+            if(sort_en == mate){
+                dup = 0;
+            }
+            else{
+                dup = is_duplicate_seq_en(seq, sort_en,is_rev, seq->abs_pos);
+            }
 
             if(dup == 1){
                 // seq is the duplicate
@@ -348,11 +351,11 @@ void process_sam_record_1(bseq1s_t *seq, sort_struct_t * sld){
     if(seq == NULL){
         return;
     }
-    seq_en = add_mt_entry(seq, sld);
+    seq_en = add_mt_entry(seq, sld,NULL);
 
     // Check if the seq has a mate
     if(seq->mate != NULL){
-        mate_en = add_mt_entry(seq->mate, sld);
+        mate_en = add_mt_entry((bseq1s_t *)seq->mate, sld,seq_en);
         seq_en->mate = (void *) mate_en;
         mate_en->mate = (void *) seq_en;
     }
@@ -577,30 +580,24 @@ int is_duplicate_ens(half_mt_entry * en1, half_mt_entry * en2, int rev, int64_t 
                         return 1;
                     }
                     else{
-                        if(((en1->flags & 0x40) == (en2->flags & 0x40))){
+                        memcpy(&tmp1,en1->fileptr,5*sizeof(uint8_t));
+                        memcpy(&tmp2,en1->fileptr,5*sizeof(uint8_t));
 
-                            memcpy(&tmp1,en1->fileptr,5*sizeof(uint8_t));
-                            memcpy(&tmp2,en1->fileptr,5*sizeof(uint8_t));
-
-                            if(tmp1 < tmp2){
-                                if(sort_verbose >= 5){
-                                    fprintf(stderr,"2 was marked duplicate due to higher fileptr\n");
-                                }
-                                en2->flags |= 0x400;
-                                en2->flags |= 0x8000;
-                                return -1;
+                        if(tmp1 < tmp2){
+                            if(sort_verbose >= 5){
+                                fprintf(stderr,"2 was marked duplicate due to higher fileptr\n");
                             }
-                            else {
-                                if(sort_verbose >= 5){
-                                    fprintf(stderr,"1 was marked duplicate due to higher fileptr\n");
-                                }
-                                en1->flags |= 0x400;
-                                en1->flags |= 0x8000;
-                                return 1;
-                            }
+                            en2->flags |= 0x400;
+                            en2->flags |= 0x8000;
+                            return -1;
                         }
-                        else{
-                            return 0;
+                        else {
+                            if(sort_verbose >= 5){
+                                fprintf(stderr,"1 was marked duplicate due to higher fileptr\n");
+                            }
+                            en1->flags |= 0x400;
+                            en1->flags |= 0x8000;
+                            return 1;
                         }
                     }
                 }
@@ -784,30 +781,24 @@ int is_duplicate_seq_en(bseq1s_t * en1, half_mt_entry * en2, int rev, int64_t re
                     else{
 
                         // Sorted positions are also the same now compare position in pair
-                        if(((en1->flags & 0x40) == (en2->flags & 0x40))){
+                        memcpy(&tmp1,en1->fileptr,5*sizeof(uint8_t));
+                        memcpy(&tmp1,en1->fileptr,5*sizeof(uint8_t));
 
-                            memcpy(&tmp1,en1->fileptr,5*sizeof(uint8_t));
-                            memcpy(&tmp1,en1->fileptr,5*sizeof(uint8_t));
-
-                            if(tmp1 < tmp2){
-                                if(sort_verbose >= 5){
-                                    fprintf(stderr,"2 was marked duplicate due to higher fileptr\n");
-                                }
-                                en2->flags |= 0x400;
-                                en2->flags |= 0x8000;
-                                return -1;
+                        if(tmp1 < tmp2){
+                            if(sort_verbose >= 5){
+                                fprintf(stderr,"2 was marked duplicate due to higher fileptr\n");
                             }
-                            else {
-                                if(sort_verbose >= 5){
-                                    fprintf(stderr,"1 was marked duplicate due to higher fileptr\n");
-                                }
-                                en1->flags |= 0x400;
-                                en1->flags |= 0x8000;
-                                return 1;
-                            }
+                            en2->flags |= 0x400;
+                            en2->flags |= 0x8000;
+                            return -1;
                         }
-                        else{
-                            return 0;
+                        else {
+                            if(sort_verbose >= 5){
+                                fprintf(stderr,"1 was marked duplicate due to higher fileptr\n");
+                            }
+                            en1->flags |= 0x400;
+                            en1->flags |= 0x8000;
+                            return 1;
                         }
                     }
                 }
@@ -992,11 +983,11 @@ bseq1s_t * get_sam_record(char * line, size_t line_size,uint64_t fileptr){
     get_record(line, line_size, &flags, &chr_num, &pos, &fcorr, &rcorr,&avg_qual, &mate_diff);
 
 
-    /*if(sort_verbose >= 3){
+    if(sort_verbose >= 3){
         fprintf(stderr,"%s",line);
         fprintf(stderr,"Fileptr ; %ld\n",fileptr);
         fprintf(stderr,"-----------------------------------------\n");
-    }*/
+    }
 
     if(sort_verbose >= 10){
         fprintf(stderr,"[Generated] Flags : %d, chr_num : %d, pos : %ld, fcorr : %d, rcorr : %d, avg_qual : %d, mate_diff : %d\n",(flags & 0xFFF),chr_num,pos,fcorr,rcorr,avg_qual,mate_diff); 
@@ -1141,7 +1132,20 @@ void mark_duplicates_in_ot(ot_entry ** ot, int64_t len, int rev){
             }
             else{
                 // Check for duplicates here
-                dup = is_duplicate_ens(&e1->ote, &e2->ote, rev, e1->ref_pos);
+                half_mt_entry * e1_ote = &e1->ote;
+                half_mt_entry * e1_ote_m = (half_mt_entry *)e1->ote.mate;
+                half_mt_entry * e2_ote = &e2->ote;
+                half_mt_entry * e2_ote_m = (half_mt_entry *)e2->ote.mate;
+
+                if(e1_ote_m == e2_ote){
+                    assert(e2_ote_m == e1_ote);
+                    dup = 0;
+                }
+                else{
+                    // Test for Mark duplicate only if the two reads are not mates of each other
+                    dup = is_duplicate_ens(&e1->ote, &e2->ote, rev, e1->ref_pos);
+                }
+
                 if(dup == 1){
                     // Restart run from i + 1;
                     new_i = i + 1;
@@ -1934,8 +1938,8 @@ void sort_MT(char * in_sam_filename,char * out_sam_filename,int num_threads, int
                 // Entry has valid sam record
                 // Search for mat if the entry is properly paired and not a secondary alignment
                 
-                if(((s->flags & 0x2) != 0) && ((s->flags & 0x100) == 0)){
-                    // s is properly paired and not a secondary alignment
+                if(((s->flags & 0x100) == 0)){
+                    // s is not a secondary alignment
                     while(1){
                         fileptr = (uint64_t)ftell(in_sam);
                         ret = getline(&line,&line_size,in_sam);
@@ -1946,12 +1950,32 @@ void sort_MT(char * in_sam_filename,char * out_sam_filename,int num_threads, int
 
                         // The mate should go to the same chromosome and also be properly paired and not a secondary alignment;
 
-                        if(((m->flags & 0x2) != 0) && ((m->flags & 0x100) == 0)){
-                            s->mate = (void *)m;
-                            m->mate = (void *)s;
+                        if(((m->flags & 0x100) == 0)){
+                            if(m->chr_num != -1 && m->abs_pos != -1){
+                                if(m->chr_num != s->chr_num){
+                                    m->abs_pos += chr_len[m->chr_num - 1];
+                                    m->mate = NULL; 
+                                    tid = chr_thread_id[m->chr_num - 1];
+                                    sending_queue = qs[tid];
+                                    addElement(sending_queue, (void *)m);
+                                    
+                                    s->mate = NULL;
+                                    
+                                }
+                                else{
+                                    s->mate = (void *)m;
+                                    m->mate = (void *)s;
+                                }
+                            }
+                            else{
+                                add_entry_to_umt(m,&umt);
+                                free(m);
+                            }
+
                             break; 
                         }
                         else{
+                            // mate is secodary alignment send it independantly
                             if(m->chr_num != -1 && m->abs_pos != -1){
                                 m->abs_pos += chr_len[m->chr_num - 1];
                                 m->mate = NULL; 
