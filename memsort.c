@@ -836,8 +836,20 @@ int md_comparator(const void **p, const void **q)
     }
     else if(l->ref_pos == r->ref_pos){
 
-
-        return 0;
+        // Put properly paired reads before improperly paired reads
+        if(((l->ote.flags & 0x2) != 0) && ((r->ote.flags & 0x2) == 0)){
+            // l is properly paired and r is not,
+            // l goes before r
+            return -1; 
+        }
+        else if(((l->ote.flags & 0x2) == 0) && ((r->ote.flags & 0x2) != 0)){
+            // r is properly paired and l is not,
+            // r goes before l
+            return 1;
+        }
+        else{
+            return 0;
+        }
     }
     else{
         return 1;
@@ -983,11 +995,11 @@ bseq1s_t * get_sam_record(char * line, size_t line_size,uint64_t fileptr){
     get_record(line, line_size, &flags, &chr_num, &pos, &fcorr, &rcorr,&avg_qual, &mate_diff);
 
 
-    if(sort_verbose >= 3){
+    /*if(sort_verbose >= 3){
         fprintf(stderr,"%s",line);
         fprintf(stderr,"Fileptr ; %ld\n",fileptr);
         fprintf(stderr,"-----------------------------------------\n");
-    }
+    }*/
 
     if(sort_verbose >= 10){
         fprintf(stderr,"[Generated] Flags : %d, chr_num : %d, pos : %ld, fcorr : %d, rcorr : %d, avg_qual : %d, mate_diff : %d\n",(flags & 0xFFF),chr_num,pos,fcorr,rcorr,avg_qual,mate_diff); 
