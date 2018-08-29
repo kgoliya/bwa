@@ -43,6 +43,9 @@ typedef struct {
     uint16_t mate_diff;
     uint16_t flags;
     uint8_t last_entry;
+    uint8_t mate_chr_num;
+    int mate_pos;
+    
     void * mate;
 } bseq1s_t;
 

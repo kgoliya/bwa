@@ -14,12 +14,15 @@ typedef struct {
     // Bit 15: Seen for mark duplicate processing(0x8000)
     // Bit 14: Seen for generating sam(0x4000)
     // Bit 13: valid(0x2000)
+    // Bit 12: mate is not in same chromosome (0x1000)
     uint16_t flags;
     uint16_t mate_diff;
     int64_t ref_pos;
 
     // mate entry's pointer
     void * mate;
+    uint8_t mate_chr_num;
+    int mate_pos;
 } half_mt_entry;
 
 
@@ -87,6 +90,15 @@ typedef struct {
     int ot_entries_start;
     sort_list_t ** list;
 } sort_list;
+
+typedef struct {
+    int n;
+    int size;
+    int inc;
+    int64_t * dups;
+}dup_list;
+
+
 
 
 void sorting_init(int64_t l_pac);
