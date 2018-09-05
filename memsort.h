@@ -16,7 +16,6 @@ typedef struct {
     // Bit 13: valid(0x2000)
     // Bit 12: mate is not in same chromosome (0x1000)
     uint16_t flags;
-    uint16_t mate_diff;
     int64_t ref_pos;
 
     // mate entry's pointer

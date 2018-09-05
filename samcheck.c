@@ -88,6 +88,8 @@ void check_sam_files(char * sam1_file_name, char * sam2_file_name, char * out_fi
     int ch = 0;
     int64_t num_diff_lines = 0;
     int64_t line_num = 0;
+    int line_num_div = 0;
+
 
     while(!feof(sam1) && !feof(sam2)){
         ch = 0;
@@ -103,6 +105,11 @@ void check_sam_files(char * sam1_file_name, char * sam2_file_name, char * out_fi
                 fprintf(sout,"[2,%ld] %s",line_num,line2);
                 fprintf(sout,"--------------\n");
             }
+        }
+
+        if((line_num / 1000000) != line_num_div){
+            line_num_div = (line_num / 1000000);
+            fprintf(stderr,"Finished %ld reads, diff_count : %ld\n",line_num_div * 1000000,num_diff_lines); 
         }
     }
 

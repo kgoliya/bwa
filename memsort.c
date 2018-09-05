@@ -109,7 +109,6 @@ void write_entry(bseq1s_t * seq, half_mt_entry * in_en){
     in_en->correction = seq->correction;
     in_en->avg_qual = seq->avg_qual;
     in_en->flags = seq->flags;
-    in_en->mate_diff = seq->mate_diff;
     in_en->ref_pos = seq->abs_pos;
     in_en->mate_chr_num = seq->mate_chr_num;
     in_en->mate_pos = seq->mate_pos;
@@ -123,7 +122,6 @@ void copy_entry(half_mt_entry * src_en, half_mt_entry * dest_en){
     dest_en->correction = src_en->correction;
     dest_en->avg_qual = src_en->avg_qual;
     dest_en->flags = src_en->flags;
-    dest_en->mate_diff = src_en->mate_diff;
     dest_en->ref_pos = src_en->ref_pos;
     dest_en->mate = src_en->mate;
     dest_en->mate_chr_num = src_en->mate_chr_num;
@@ -440,7 +438,6 @@ void print_mt_entry(half_mt_entry * en1, half_mt_entry * en2){
     fprintf(stderr,"Corr : %d\t\t|\tCorr : %d\n",en1->correction,en2->correction);
     fprintf(stderr,"Avg_qual : %d\t\t|\tAvg_qual : %d\n",en1->avg_qual,en2->avg_qual);
     fprintf(stderr,"Flags : %d\t\t|\tFlags : %d\n",(en1->flags & 0xfff),(en2->flags & 0xfff));
-    fprintf(stderr,"Mate diff : %d\t\t|\tMate diff : %d\n",en1->mate_diff,en2->mate_diff);
     fprintf(stderr,"Mate chr num : %d\t\t|\tMate chr num : %d\n",en1->mate_chr_num,en2->mate_chr_num);
     fprintf(stderr,"Mate pos : %d\t\t|\tMate pos : %d\n",en1->mate_pos,en2->mate_pos);
 
@@ -455,7 +452,6 @@ void print_seq_mt_entry(bseq1s_t * en1, half_mt_entry * en2){
     fprintf(stderr,"Corr : %d\t\t|\tCorr : %d\n",en1->correction,en2->correction);
     fprintf(stderr,"Avg_qual : %d\t\t|\tAvg_qual : %d\n",en1->avg_qual,en2->avg_qual);
     fprintf(stderr,"Flags : %d\t\t|\tFlags : %d\n",(en1->flags & 0xfff),(en2->flags & 0xfff));
-    fprintf(stderr,"Mate diff : %d\t\t|\tMate diff : %d\n",en1->mate_diff,en2->mate_diff);
     fprintf(stderr,"Mate chr num : %d\t\t|\tMate chr num : %d\n",en1->mate_chr_num,en2->mate_chr_num);
     fprintf(stderr,"Mate pos : %d\t\t|\tMate pos : %d\n",en1->mate_pos,en2->mate_pos);
 }
@@ -487,7 +483,7 @@ int is_duplicate_ens(half_mt_entry * en1, half_mt_entry * en2, int rev, int64_t 
         
         half_mt_entry * en1_m = (half_mt_entry *) en1->mate;
         half_mt_entry * en2_m = (half_mt_entry *) en2->mate;
-        if(sort_verbose >= 5){
+        if(sort_verbose >= 10){
             fprintf(stderr,"------------------------------------------\n");
             fprintf(stderr,"%s\n",__func__);
             print_mt_entry(en1,en2);
@@ -495,7 +491,7 @@ int is_duplicate_ens(half_mt_entry * en1, half_mt_entry * en2, int rev, int64_t 
             print_mt_entry(en1_m,en2_m);
         }
 
-        if((en1->mate_diff == en2->mate_diff) && ((en1->flags & 0x10) == (en2->flags & 0x10)) && (en1->mate_chr_num = en2->mate_chr_num) && (en1->mate_pos == en2->mate_pos)){
+        if(((en1->flags & 0x10) == (en2->flags & 0x10)) && (en1->mate_chr_num = en2->mate_chr_num) && (en1->mate_pos == en2->mate_pos)){
             // Mate diff is the same
             // Check the mates position now
             if((en1_m->ref_pos == en2_m->ref_pos) && ((en1_m->flags & 0x10) == (en2_m->flags & 0x10))){
@@ -503,7 +499,7 @@ int is_duplicate_ens(half_mt_entry * en1, half_mt_entry * en2, int rev, int64_t 
 
                 if(en1->avg_qual < en2->avg_qual && en1_m->avg_qual < en2_m->avg_qual){
                     // en1 is a duplicate
-                    if(sort_verbose >= 5){
+                    if(sort_verbose >= 10){
                         fprintf(stderr,"1 was marked duplicate along with mate due to low avg_qual\n");
                     }
                     en1_m->flags |= 0x400;
@@ -511,7 +507,7 @@ int is_duplicate_ens(half_mt_entry * en1, half_mt_entry * en2, int rev, int64_t 
                     return 1;
                 }
                 else if(en2->avg_qual < en1->avg_qual && en2_m->avg_qual < en1_m->avg_qual){
-                    if(sort_verbose >= 5){
+                    if(sort_verbose >= 10){
                         fprintf(stderr,"2 was marked duplicate along with mate due to low avg_qual\n");
                     }
                     // en2 is the duplicate
@@ -525,7 +521,7 @@ int is_duplicate_ens(half_mt_entry * en1, half_mt_entry * en2, int rev, int64_t 
                     memcpy(&tmp2,en2->fileptr,5*sizeof(uint8_t));
 
                     if(tmp1 < tmp2){
-                        if(sort_verbose >= 5){
+                        if(sort_verbose >= 10){
                             fprintf(stderr,"2 was marked duplicate along with mate due to higher fileptr\n");
                         }
                         en2_m->flags |= 0x400;
@@ -533,7 +529,7 @@ int is_duplicate_ens(half_mt_entry * en1, half_mt_entry * en2, int rev, int64_t 
                         return -1;
                     }
                     else {
-                        if(sort_verbose >= 5){
+                        if(sort_verbose >= 10){
                             fprintf(stderr,"1 was marked duplicate along with mate due to higher fileptr\n");
                         }
                         en1_m->flags |= 0x400;
@@ -553,7 +549,7 @@ int is_duplicate_ens(half_mt_entry * en1, half_mt_entry * en2, int rev, int64_t 
 
     }
     else {
-        if(sort_verbose >= 5){
+        if(sort_verbose >= 10){
             fprintf(stderr,"------------------------------------------\n");
             fprintf(stderr,"%s\n",__func__);
             print_mt_entry(en1,en2);
@@ -567,7 +563,7 @@ int is_duplicate_ens(half_mt_entry * en1, half_mt_entry * en2, int rev, int64_t 
             if((((en1->flags & 0x8) == 0) && ((en2->flags & 0x8) == 0) && ((en1->flags & 0x20) == (en2->flags & 0x20)) && (en1->mate_chr_num == en2->mate_chr_num) && (en1->mate_pos == en2->mate_pos)) || ((en1->flags & 0x8) != 0) || ((en2->flags & 0x8) != 0)){
                 if(en1->avg_qual < en2->avg_qual){
                     // l_en1 is the duplicate
-                    if(sort_verbose >= 5){
+                    if(sort_verbose >= 10){
                         fprintf(stderr,"1 was marked duplicate due to lower avg_qual\n");
                     }
 
@@ -589,13 +585,13 @@ int is_duplicate_ens(half_mt_entry * en1, half_mt_entry * en2, int rev, int64_t 
 
                     if(tmp1 < tmp2){
                         //en2 is a duplicate
-                        if(sort_verbose >= 5){
+                        if(sort_verbose >= 10){
                             fprintf(stderr,"2 was marked duplicate due to higher sorted_position\n");
                         }
                         return -1;
                     }
                     else if(tmp1 > tmp2){
-                        if(sort_verbose >= 5){
+                        if(sort_verbose >= 10){
                             fprintf(stderr,"1 was marked duplicate due to higher sorted_position\n");
                         }
                         return 1;
@@ -605,13 +601,13 @@ int is_duplicate_ens(half_mt_entry * en1, half_mt_entry * en2, int rev, int64_t 
                         memcpy(&tmp2,en2->fileptr,5*sizeof(uint8_t));
 
                         if(tmp1 < tmp2){
-                            if(sort_verbose >= 5){
+                            if(sort_verbose >= 10){
                                 fprintf(stderr,"2 was marked duplicate due to higher fileptr\n");
                             }
                             return -1;
                         }
                         else {
-                            if(sort_verbose >= 5){
+                            if(sort_verbose >= 10){
                                 fprintf(stderr,"1 was marked duplicate due to higher fileptr\n");
                             }
                             return 1;
@@ -619,7 +615,7 @@ int is_duplicate_ens(half_mt_entry * en1, half_mt_entry * en2, int rev, int64_t 
                     }
                 }
                 else{
-                    if(sort_verbose >= 5){
+                    if(sort_verbose >= 10){
                         fprintf(stderr,"2 was marked duplicate due to lower avg_qual\n");
                     }
                     // l_en2 is duplicate
@@ -663,7 +659,7 @@ int is_duplicate_seq_en(bseq1s_t * en1, half_mt_entry * en2, int rev, int64_t re
         
         bseq1s_t * en1_m = (bseq1s_t *) en1->mate;
         half_mt_entry * en2_m = (half_mt_entry *) en2->mate;
-        if(sort_verbose >= 5){
+        if(sort_verbose >= 10){
             fprintf(stderr,"------------------------------------------\n");
             fprintf(stderr,"%s\n",__func__);
             print_seq_mt_entry(en1,en2);
@@ -672,7 +668,7 @@ int is_duplicate_seq_en(bseq1s_t * en1, half_mt_entry * en2, int rev, int64_t re
         }
 
         //if(en1->mate_diff == en2->mate_diff && ((en1->flags & 0x10) == (en2->flags & 0x10)) && ((en1->flags & 0x40) == (en2->flags & 0x40))){
-        if((en1->mate_diff == en2->mate_diff) && ((en1->flags & 0x10) == (en2->flags & 0x10)) && (en1->mate_chr_num = en2->mate_chr_num) && (en1->mate_pos == en2->mate_pos)){
+        if(((en1->flags & 0x10) == (en2->flags & 0x10)) && (en1->mate_chr_num = en2->mate_chr_num) && (en1->mate_pos == en2->mate_pos)){
             // Mate diff is the same
             // Mate diff is the same
             // Check the mates position now
@@ -681,7 +677,7 @@ int is_duplicate_seq_en(bseq1s_t * en1, half_mt_entry * en2, int rev, int64_t re
 
                 if(en1->avg_qual < en2->avg_qual && en1_m->avg_qual < en2_m->avg_qual){
                     // en1 is a duplicate
-                    if(sort_verbose >= 5){
+                    if(sort_verbose >= 10){
                         fprintf(stderr,"1 was marked duplicate along with mate due to low avg_qual\n");
                     }
                     en1->flags |= 0x400;
@@ -692,7 +688,7 @@ int is_duplicate_seq_en(bseq1s_t * en1, half_mt_entry * en2, int rev, int64_t re
                 }
                 else if(en2->avg_qual < en1->avg_qual && en2_m->avg_qual < en1_m->avg_qual){
                     // en2 is the duplicate
-                    if(sort_verbose >= 5){
+                    if(sort_verbose >= 10){
                         fprintf(stderr,"2 was marked duplicate along with mate due to low avg_qual\n");
                     }
                     en2->flags |= 0x400;
@@ -707,7 +703,7 @@ int is_duplicate_seq_en(bseq1s_t * en1, half_mt_entry * en2, int rev, int64_t re
                     memcpy(&tmp2,en2->fileptr,5*sizeof(uint8_t));
 
                     if(tmp1 < tmp2){
-                        if(sort_verbose >= 5){
+                        if(sort_verbose >= 10){
                             fprintf(stderr,"2 was marked duplicate along with mate due to high fileptr\n");
                         }
                         en2->flags |= 0x400;
@@ -717,7 +713,7 @@ int is_duplicate_seq_en(bseq1s_t * en1, half_mt_entry * en2, int rev, int64_t re
                         return -1;
                     }
                     else {
-                        if(sort_verbose >= 5){
+                        if(sort_verbose >= 10){
                             fprintf(stderr,"1 was marked duplicate along with mate due to high fileptr\n");
                         }
                         en1->flags |= 0x400;
@@ -739,7 +735,7 @@ int is_duplicate_seq_en(bseq1s_t * en1, half_mt_entry * en2, int rev, int64_t re
 
     }
     else {
-        if(sort_verbose >= 5){
+        if(sort_verbose >= 10){
             fprintf(stderr,"------------------------------------------\n");
             fprintf(stderr,"%s\n",__func__);
             print_seq_mt_entry(en1,en2);
@@ -758,7 +754,7 @@ int is_duplicate_seq_en(bseq1s_t * en1, half_mt_entry * en2, int rev, int64_t re
 
                 if(en1->avg_qual < en2->avg_qual){
                     // l_en1 is the duplicate
-                    if(sort_verbose >= 5){
+                    if(sort_verbose >= 10){
                         fprintf(stderr,"1 was marked duplicate due to low avg_qual\n");
                     }
                     en1->flags |= 0x400;
@@ -782,7 +778,7 @@ int is_duplicate_seq_en(bseq1s_t * en1, half_mt_entry * en2, int rev, int64_t re
 
                     if(tmp1 < tmp2){
                         //en2 is a duplicate
-                        if(sort_verbose >= 5){
+                        if(sort_verbose >= 10){
                             fprintf(stderr,"2 was marked duplicate due to higher sorted_position\n");
                         }
                         en2->flags |= 0x400;
@@ -790,7 +786,7 @@ int is_duplicate_seq_en(bseq1s_t * en1, half_mt_entry * en2, int rev, int64_t re
                         return -1;
                     }
                     else if(tmp1 > tmp2){
-                        if(sort_verbose >= 5){
+                        if(sort_verbose >= 10){
                             fprintf(stderr,"1 was marked duplicate due to higher sorted_position\n");
                         }
                         en1->flags |= 0x400;
@@ -804,7 +800,7 @@ int is_duplicate_seq_en(bseq1s_t * en1, half_mt_entry * en2, int rev, int64_t re
                         memcpy(&tmp2,en2->fileptr,5*sizeof(uint8_t));
 
                         if(tmp1 < tmp2){
-                            if(sort_verbose >= 5){
+                            if(sort_verbose >= 10){
                                 fprintf(stderr,"2 was marked duplicate due to higher fileptr\n");
                             }
                             en2->flags |= 0x400;
@@ -812,7 +808,7 @@ int is_duplicate_seq_en(bseq1s_t * en1, half_mt_entry * en2, int rev, int64_t re
                             return -1;
                         }
                         else {
-                            if(sort_verbose >= 5){
+                            if(sort_verbose >= 10){
                                 fprintf(stderr,"1 was marked duplicate due to higher fileptr\n");
                             }
                             en1->flags |= 0x400;
@@ -822,7 +818,7 @@ int is_duplicate_seq_en(bseq1s_t * en1, half_mt_entry * en2, int rev, int64_t re
                     }
                 }
                 else{
-                    if(sort_verbose >= 5){
+                    if(sort_verbose >= 10){
                         fprintf(stderr,"2 was marked duplicate due to lower avg_qual\n");
                     }
                     en2->flags |= 0x400;
@@ -1096,13 +1092,12 @@ bseq1s_t * get_sam_record(char * line, size_t line_size,uint64_t fileptr){
         seq->abs_pos = pos - fcorr;
         seq->correction = fcorr;
     }
-    seq->mate_diff = mate_diff;
     seq->avg_qual = avg_qual;
     seq->last_entry = 0;
 
 
     if(sort_verbose >= 10){
-        fprintf(stderr,"[Inserted] Flags : %d, chr_num : %d, pos : %ld, correction : %d, avg_qual : %d, mate_diff : %d\n",(seq->flags & 0xFFF),seq->chr_num,seq->abs_pos,seq->correction,seq->avg_qual,seq->mate_diff); 
+        fprintf(stderr,"[Inserted] Flags : %d, chr_num : %d, pos : %ld, correction : %d, avg_qual : %d, mate_chr_num : %d, mat_pos : %d\n",(seq->flags & 0xFFF),seq->chr_num,seq->abs_pos,seq->correction,seq->avg_qual,seq->mate_chr_num, seq->mate_pos); 
     }
    
     return seq;
@@ -1833,10 +1828,12 @@ void update_rot_head(int64_t * head_rot, sort_struct_t * sld, int64_t ref_pos){
 
 
 
-void generate_sorted_sam(FILE * in_sam, FILE * out_sam, sort_slave_t * sl){
+void generate_sorted_sam(FILE * in_sam, FILE * out_sam, sort_slave_t * sl, int64_t * rid, int * rid_div, struct timespec * write_start){
     // Resort the OT table
     sort_struct_t * sld = sl->sld;
     int64_t mt_length = sl->length;
+    struct timespec write_end;
+    double write_time = 0.0;
 
     int64_t i = 0;
     int64_t head_fot = 0;
@@ -1866,6 +1863,7 @@ void generate_sorted_sam(FILE * in_sam, FILE * out_sam, sort_slave_t * sl){
                 for(j=0;j<l->n;j++){
                     // Print sam record
                     fprintf(out_sam,"%s",l->list[j]->sam);
+                    *rid += 1;
                     //print_sam(in_sam,out_sam,l->list[j]->ote);
                 }
                 free_sort_list(l);
@@ -1891,6 +1889,7 @@ void generate_sorted_sam(FILE * in_sam, FILE * out_sam, sort_slave_t * sl){
             for(j=0;j<l->n;j++){
                 // Print sam record
                 fprintf(out_sam,"%s",l->list[j]->sam);
+                *rid += 1;
                 //print_sam(in_sam,out_sam,l->list[j]->ote);
             }
             free_sort_list(l);
@@ -1903,11 +1902,19 @@ void generate_sorted_sam(FILE * in_sam, FILE * out_sam, sort_slave_t * sl){
                 for(j=0;j<l->n;j++){
                     // Print sam record
                     fprintf(out_sam,"%s",l->list[j]->sam);
+                    *rid += 1;
                     //print_sam(in_sam,out_sam,l->list[j]->ote);
                 }
                 free_sort_list(l);
                 l->n = 0;
             }
+        }
+
+        if(sort_verbose >= 5 && ((*rid / 1000000) != *rid_div)){
+            clock_gettime(CLOCK_REALTIME,&write_end);
+            write_time = (double)(write_end.tv_sec - write_start->tv_sec) + ((double)(write_end.tv_nsec - write_start->tv_nsec)/(double)(1000000000));
+            *rid_div = (*rid / 1000000);
+            fprintf(stderr,"Written %ld reads in %f time \n",*rid_div * 1000000,write_time);
         }
 
     }
@@ -2069,6 +2076,7 @@ void sort_MT(char * in_sam_filename,char * out_sam_filename,int num_threads, int
     if(sort_verbose >= 3){
         clock_gettime(CLOCK_REALTIME,&read_start);
     }
+    int current_div = 0;
     while(!feof(in_sam)){
         fileptr = (uint64_t)ftell(in_sam);
         ret = getline(&line,&line_size,in_sam);
@@ -2106,11 +2114,11 @@ void sort_MT(char * in_sam_filename,char * out_sam_filename,int num_threads, int
                                     tid = chr_thread_id[m->chr_num - 1];
                                     sending_queue = qs[tid];
                                     addElement(sending_queue, (void *)m);
-                                    
+                                     
                                     s->mate = NULL;
-                                    
                                 }
                                 else{
+
                                     s->mate = (void *)m;
                                     m->mate = (void *)s;
                                 }
@@ -2156,15 +2164,19 @@ void sort_MT(char * in_sam_filename,char * out_sam_filename,int num_threads, int
                 add_entry_to_umt(s,&umt);
                 free(s);
             } 
-            if(sort_verbose >= 3 && read_id % 10000000 == 0){
+            if(sort_verbose >= 3 && ((read_id / 10000000) != current_div)){
                 clock_gettime(CLOCK_REALTIME,&read_end);
                 read_time = (double)(read_end.tv_sec - read_start.tv_sec) + ((double)(read_end.tv_nsec - read_start.tv_nsec)/(double)(1000000000));
-                fprintf(stderr,"Read %d reads in %f secs\n",read_id,read_time);
+                current_div = (read_id / 10000000);
+                fprintf(stderr,"Read %d reads in %f secs\n",current_div * 10000000,read_time);
             }
         }
     }
 
     fclose(in_sam);
+    if(line){
+        free(line);
+    }
 
     for(i=0;i<num_threads;i++){
         sending_queue = qs[i];
@@ -2177,7 +2189,6 @@ void sort_MT(char * in_sam_filename,char * out_sam_filename,int num_threads, int
         s->sam_size = 0;
         s->chr_num = 0;
         s->abs_pos = 0;
-        s->mate_diff = 0;
         s->correction = 0;
         s->is_rev = 0;
         s->flags = 0;
@@ -2232,16 +2243,22 @@ void sort_MT(char * in_sam_filename,char * out_sam_filename,int num_threads, int
 
     // Print output sam file
 
-    if(out_sam_filename == NULL){
-        out_sam = stdout;
-    }
-    else{
+    if(out_sam_filename != NULL){
         out_sam = fopen(out_sam_filename,"w");
+        in_sam = fopen(in_sam_filename,"r");
     }
-    in_sam = fopen(in_sam_filename,"r");
+
+    int64_t write_rid = 0;
+    int write_rid_div = 0;
+
+    struct timespec write_start;
+    clock_gettime(CLOCK_REALTIME,&write_start);
+   
 
     for(i=0;i<num_threads;i++){
-        generate_sorted_sam(in_sam, out_sam,&slaves[i]);
+        if(out_sam_filename != NULL){
+            generate_sorted_sam(in_sam, out_sam,&slaves[i], &write_rid, &write_rid_div, &write_start);
+        }
         //fprintf(stderr,"Statistics for entries for tid : %d\n",i);
         //count_valid_entries(slaves[i].sld);
         struct_delete(slaves[i].sld);
@@ -2249,26 +2266,33 @@ void sort_MT(char * in_sam_filename,char * out_sam_filename,int num_threads, int
         //fprintf(stderr,"=================================\n");
     }
 
+    if(sort_verbose >= 5){
+        fprintf(stderr,"Written %ld reads\n",write_rid);
+    }
+
 
     // Get all strings for unmapped entries
 
-    /*for(i=0;i<umt.n;i++){
-        get_sam_umt(in_sam, umt.list[i]);
+
+    if(out_sam_filename != NULL){
+        for(i=0;i<umt.n;i++){
+            get_sam_umt(in_sam, umt.list[i]);
+        }
+
+        if(umt.n > 0){
+            qsort(umt.list,umt.n,sizeof(unmapped_entry *),umt_comparator);
+        }
     }
 
-    if(umt.n > 0){
-        qsort(umt.list,umt.n,sizeof(unmapped_entry *),umt_comparator);
-    }*/
-
     for(i=0;i<umt.n;i++){
-        //get_sam_umt(in_sam, umt.list[i]);
-        //fprintf(out_sam,"%s",umt.list[i]->sam);
-        free(umt.list[i]->sam);
+        if(out_sam_filename != NULL){
+            fprintf(out_sam,"%s",umt.list[i]->sam);
+            free(umt.list[i]->sam);
+        }
         free(umt.list[i]);
     }
 
     // Free umt
-
     free(umt.list);
 
 
@@ -2279,8 +2303,10 @@ void sort_MT(char * in_sam_filename,char * out_sam_filename,int num_threads, int
     free(lens);
     free(chr_thread_id);
     free(chr_len);
-    fclose(in_sam);
-    fclose(out_sam);
+    if(out_sam_filename != NULL){
+        fclose(in_sam);
+        fclose(out_sam);
+    }
     return;
 }
 
