@@ -225,7 +225,7 @@ void add_ot_entry_from_mt(int64_t ref_pos,half_mt_entry * in_en, sort_struct_t *
 }
 
 
-half_mt_entry * add_mt_entry(bseq1s_t *seq, sort_struct_t * sld, half_mt_entry * mate){
+half_mt_entry * add_mt_entry(bseq1s_t *seq, sort_struct_t * sld, half_mt_entry * mate, char * in_sam_filename){
 
 
     half_mt_entry ** sort_en_add;
@@ -311,7 +311,7 @@ half_mt_entry * add_mt_entry(bseq1s_t *seq, sort_struct_t * sld, half_mt_entry *
                     dup = 0;
                 }
                 else{
-                    dup = is_duplicate_seq_en(seq, sort_en,is_rev, seq->abs_pos);
+                    dup = is_duplicate_seq_en(seq, sort_en,is_rev, seq->abs_pos, in_sam_filename);
                 }
 
                 if(dup == 1){
@@ -370,18 +370,18 @@ half_mt_entry * add_mt_entry(bseq1s_t *seq, sort_struct_t * sld, half_mt_entry *
 }
 
 
-void process_sam_record_1(bseq1s_t *seq, sort_struct_t * sld){
+void process_sam_record_1(bseq1s_t *seq, sort_struct_t * sld, char * in_sam_filename){
 
     half_mt_entry * seq_en;
     half_mt_entry * mate_en;
     if(seq == NULL){
         return;
     }
-    seq_en = add_mt_entry(seq, sld,NULL);
+    seq_en = add_mt_entry(seq, sld,NULL, in_sam_filename);
 
     // Check if the seq has a mate
     if(seq->mate != NULL){
-        mate_en = add_mt_entry((bseq1s_t *)seq->mate, sld,seq_en);
+        mate_en = add_mt_entry((bseq1s_t *)seq->mate, sld,seq_en, in_sam_filename);
         seq_en->mate = (void *) mate_en;
         mate_en->mate = (void *) seq_en;
         
@@ -458,6 +458,71 @@ void print_seq_mt_entry(bseq1s_t * en1, half_mt_entry * en2){
 
 
 
+
+// if 0 : no decision for marking duplicates 
+// if -1 : en2 should be marked as duplicate
+// if 1 : en1 should be marked as duplicate
+int compare_sam_names_ens(half_mt_entry * en1, half_mt_entry * en2, char * in_sam_filename){
+    int64_t tmp1 = 0;
+    int64_t tmp2 = 0;
+    int i = 0;
+    FILE * in_sam = fopen(in_sam_filename,"r");
+
+    memcpy(&tmp1,en1->fileptr,5*sizeof(uint8_t));
+    memcpy(&tmp2,en2->fileptr,5*sizeof(uint8_t));
+
+
+    fseek(in_sam,tmp1,SEEK_SET);
+    char * sam1 = (char *) malloc((en1->sam_size + 1) * sizeof(char)); 
+    int name_len1 = 0;
+    memset(sam1,0,en1->sam_size+1);
+    fread(sam1,sizeof(char),en1->sam_size,in_sam);
+
+    for(i=0;i<en1->sam_size;i++){
+        if(sam1[i] == '\t'){
+            name_len1 = i;
+            break;
+        }
+    }
+
+    fseek(in_sam,tmp2,SEEK_SET);
+    char * sam2 = (char *) malloc((en2->sam_size + 1) * sizeof(char)); 
+    int name_len2 = 0;
+    memset(sam2,0,en2->sam_size+1);
+    fread(sam2,sizeof(char),en2->sam_size,in_sam);
+
+    for(i=0;i<en2->sam_size;i++){
+        if(sam2[i] == '\t'){
+            name_len2 = i;
+            break;
+        }
+    }
+
+    int lex = lexicographic_comparator(sam1,name_len1, sam2, name_len2);
+
+    free(sam1);
+    free(sam2);
+    fclose(in_sam);
+    
+    if(lex == -1){
+        // sam1 appears before sam2
+        // mark en2 as duplicate
+        return -1;
+    }
+    else if(lex == 1){
+        // sam2 appears before sam1
+        // mark en1 as duplicate
+        return 1;
+    }
+    else{
+        return 0;
+    }
+
+}
+
+
+
+
 // Return value :
 // 0 : no decision for marking duplicates
 // 1 : l_en1 is marked as duplicate
@@ -465,10 +530,13 @@ void print_seq_mt_entry(bseq1s_t * en1, half_mt_entry * en2){
 // 2 : Exit due to inputs being duplicates or secondary alignments
 
 
-int is_duplicate_ens(half_mt_entry * en1, half_mt_entry * en2, int rev, int64_t ref_pos){
+
+int is_duplicate_ens(half_mt_entry * en1, half_mt_entry * en2, int rev, int64_t ref_pos, char * in_sam_filename){
+
    
     int64_t tmp1 = 0;
     int64_t tmp2 = 0;
+    int lex = 0;
 
     if(((en1->flags & 0x400) != 0) || ((en2->flags & 0x400) != 0) || ((en1->flags & 0x100) != 0) || ((en2->flags & 0x100) != 0) || ((en1->flags & 0x4) != 0) || ((en2->flags & 0x4) != 0)){
         // either entry is a duplicate or a secondary alignment or a unmapped read
@@ -525,25 +593,24 @@ int is_duplicate_ens(half_mt_entry * en1, half_mt_entry * en2, int rev, int64_t 
                 }
                 else{
                     // Check the fileptrs, the larger one is marked as the duplicate
-                    memcpy(&tmp1,en1->fileptr,5*sizeof(uint8_t));
-                    memcpy(&tmp2,en2->fileptr,5*sizeof(uint8_t));
+                        lex = compare_sam_names_ens(en1,en2,in_sam_filename);
 
-                    if(tmp1 < tmp2){
-                        if(sort_verbose >= 10){
-                            fprintf(stderr,"2 was marked duplicate along with mate due to higher fileptr\n");
+                        if(lex == -1){
+                            if(sort_verbose >= 10){
+                                fprintf(stderr,"2 was marked duplicate with mate due to lexicographic order\n");
+                            }
+                            en2_m->flags |= 0x400;
+                            en2_m->flags |= 0x8000;
+                            return -1;
                         }
-                        en2_m->flags |= 0x400;
-                        en2_m->flags |= 0x8000;
-                        return -1;
-                    }
-                    else {
-                        if(sort_verbose >= 10){
-                            fprintf(stderr,"1 was marked duplicate along with mate due to higher fileptr\n");
+                        else {
+                            if(sort_verbose >= 10){
+                                fprintf(stderr,"1 was marked duplicate with mate due to lexicographic order\n");
+                            }
+                            en1_m->flags |= 0x400;
+                            en1_m->flags |= 0x8000;
+                            return 1;
                         }
-                        en1_m->flags |= 0x400;
-                        en1_m->flags |= 0x8000;
-                        return -1;
-                    }
                 }
             }
             else{
@@ -605,18 +672,17 @@ int is_duplicate_ens(half_mt_entry * en1, half_mt_entry * en2, int rev, int64_t 
                         return 1;
                     }
                     else{
-                        memcpy(&tmp1,en1->fileptr,5*sizeof(uint8_t));
-                        memcpy(&tmp2,en2->fileptr,5*sizeof(uint8_t));
+                        lex = compare_sam_names_ens(en1,en2,in_sam_filename);
 
-                        if(tmp1 < tmp2){
+                        if(lex == -1){
                             if(sort_verbose >= 10){
-                                fprintf(stderr,"2 was marked duplicate due to higher fileptr\n");
+                                fprintf(stderr,"2 was marked duplicate due to lexicographic order\n");
                             }
                             return -1;
                         }
                         else {
                             if(sort_verbose >= 10){
-                                fprintf(stderr,"1 was marked duplicate due to higher fileptr\n");
+                                fprintf(stderr,"1 was marked duplicate due to lexicographic order\n");
                             }
                             return 1;
                         }
@@ -643,16 +709,79 @@ int is_duplicate_ens(half_mt_entry * en1, half_mt_entry * en2, int rev, int64_t 
     return 0;
 }
 
+// if 0 : no decision for marking duplicates 
+// if -1 : en2 should be marked as duplicate
+// if 1 : en1 should be marked as duplicate
+int compare_sam_names_en_seq(bseq1s_t * en1, half_mt_entry * en2, char * in_sam_filename){
+    int64_t tmp1 = 0;
+    int64_t tmp2 = 0;
+    int i = 0;
+    FILE * in_sam = fopen(in_sam_filename,"r");
+
+    memcpy(&tmp1,en1->fileptr,5*sizeof(uint8_t));
+    memcpy(&tmp2,en2->fileptr,5*sizeof(uint8_t));
+
+
+    fseek(in_sam,tmp1,SEEK_SET);
+    char * sam1 = (char *) malloc((en1->sam_size + 1) * sizeof(char)); 
+    int name_len1 = 0;
+    memset(sam1,0,en1->sam_size+1);
+    fread(sam1,sizeof(char),en1->sam_size,in_sam);
+
+    for(i=0;i<en1->sam_size;i++){
+        if(sam1[i] == '\t'){
+            name_len1 = i;
+            break;
+        }
+    }
+
+    fseek(in_sam,tmp2,SEEK_SET);
+    char * sam2 = (char *) malloc((en2->sam_size + 1) * sizeof(char)); 
+    int name_len2 = 0;
+    memset(sam2,0,en2->sam_size+1);
+    fread(sam2,sizeof(char),en2->sam_size,in_sam);
+
+    for(i=0;i<en2->sam_size;i++){
+        if(sam2[i] == '\t'){
+            name_len2 = i;
+            break;
+        }
+    }
+
+    int lex = lexicographic_comparator(sam1,name_len1, sam2, name_len2);
+
+    free(sam1);
+    free(sam2);
+    fclose(in_sam);
+    
+    if(lex == -1){
+        // sam1 appears before sam2
+        // mark en2 as duplicate
+        return -1;
+    }
+    else if(lex == 1){
+        // sam2 appears before sam1
+        // mark en1 as duplicate
+        return 1;
+    }
+    else{
+        return 0;
+    }
+
+}
+
+
 // Return value :
 // 0 : no decision for marking duplicates
 // 1 : l_en1 is marked as duplicate
 // -1: l_en2 is marked as duplicate
 // 2 : Exit due to inputs being duplicates or secondary alignments
 
-int is_duplicate_seq_en(bseq1s_t * en1, half_mt_entry * en2, int rev, int64_t ref_pos){
+int is_duplicate_seq_en(bseq1s_t * en1, half_mt_entry * en2, int rev, int64_t ref_pos, char * in_sam_filename){
    
     int64_t tmp1 = 0;
     int64_t tmp2 = 0;
+    int lex = 0;
 
     if(((en1->flags & 0x400) != 0) || ((en2->flags & 0x400) != 0) || ((en1->flags & 0x100) != 0) || ((en2->flags & 0x100) != 0)){
         // either entry is a duplicate or a secondary alignment
@@ -711,12 +840,11 @@ int is_duplicate_seq_en(bseq1s_t * en1, half_mt_entry * en2, int rev, int64_t re
                 }
                 else{
                     // Check the fileptrs, the larger one is marked as the duplicate
-                    memcpy(&tmp1,en1->fileptr,5*sizeof(uint8_t));
-                    memcpy(&tmp2,en2->fileptr,5*sizeof(uint8_t));
+                    lex = compare_sam_names_en_seq(en1,en2,in_sam_filename);
 
-                    if(tmp1 < tmp2){
+                    if(lex == -1){
                         if(sort_verbose >= 10){
-                            fprintf(stderr,"2 was marked duplicate along with mate due to high fileptr\n");
+                            fprintf(stderr,"2 was marked duplicate due to lexicographic order\n");
                         }
                         en2->flags |= 0x400;
                         en2->flags |= 0x8000;
@@ -726,7 +854,7 @@ int is_duplicate_seq_en(bseq1s_t * en1, half_mt_entry * en2, int rev, int64_t re
                     }
                     else {
                         if(sort_verbose >= 10){
-                            fprintf(stderr,"1 was marked duplicate along with mate due to high fileptr\n");
+                            fprintf(stderr,"1 was marked duplicate due to lexicographic order\n");
                         }
                         en1->flags |= 0x400;
                         en1->flags |= 0x8000;
@@ -807,13 +935,11 @@ int is_duplicate_seq_en(bseq1s_t * en1, half_mt_entry * en2, int rev, int64_t re
                     }
                     else{
 
-                        // Sorted positions are also the same now compare position in pair
-                        memcpy(&tmp1,en1->fileptr,5*sizeof(uint8_t));
-                        memcpy(&tmp2,en2->fileptr,5*sizeof(uint8_t));
+                        lex = compare_sam_names_en_seq(en1,en2,in_sam_filename);
 
-                        if(tmp1 < tmp2){
+                        if(lex == -1){
                             if(sort_verbose >= 10){
-                                fprintf(stderr,"2 was marked duplicate due to higher fileptr\n");
+                                fprintf(stderr,"2 was marked duplicate due to lexicographic order\n");
                             }
                             en2->flags |= 0x400;
                             en2->flags |= 0x8000;
@@ -821,7 +947,7 @@ int is_duplicate_seq_en(bseq1s_t * en1, half_mt_entry * en2, int rev, int64_t re
                         }
                         else {
                             if(sort_verbose >= 10){
-                                fprintf(stderr,"1 was marked duplicate due to higher fileptr\n");
+                                fprintf(stderr,"1 was marked duplicate due to lexicographic order\n");
                             }
                             en1->flags |= 0x400;
                             en1->flags |= 0x8000;
@@ -1214,7 +1340,7 @@ void free_dup_list(dup_list * in){
 
 
 
-void mark_duplicates_in_ot(ot_entry ** ot, int64_t len, int rev, half_mt_entry ** mt){
+void mark_duplicates_in_ot(ot_entry ** ot, int64_t len, int rev, half_mt_entry ** mt, char * in_sam_filename){
     int64_t i,j = 0;
     int k = 0;
     ot_entry * e1 = 0;
@@ -1254,7 +1380,7 @@ void mark_duplicates_in_ot(ot_entry ** ot, int64_t len, int rev, half_mt_entry *
             // Ignore entry if it already marked as a duplicate, is a secondary alignment and is an unmapped entry
             return;
         }
-        dup = is_duplicate_ens(e1_ote, e2_ote, rev, e1->ref_pos);
+        dup = is_duplicate_ens(e1_ote, e2_ote, rev, e1->ref_pos, in_sam_filename);
 
         if(dup == 1){
             e1_ote->flags |= 0x400;
@@ -1324,7 +1450,7 @@ void mark_duplicates_in_ot(ot_entry ** ot, int64_t len, int rev, half_mt_entry *
                 }
                 else{
                     // Test for Mark duplicate only if the two reads are not mates of each other
-                    dup = is_duplicate_ens(e1_ote, e2_ote, rev, e1->ref_pos);
+                    dup = is_duplicate_ens(e1_ote, e2_ote, rev, e1->ref_pos, in_sam_filename);
                 }
 
                 if(dup == 1){
@@ -1371,12 +1497,12 @@ void mark_duplicates_in_ot(ot_entry ** ot, int64_t len, int rev, half_mt_entry *
     free_dup_list(&l);
 }
 
-void mark_duplicates(sort_struct_t * sld){
+void mark_duplicates(sort_struct_t * sld, char * in_sam_filename){
     if(sld->fot_length > 0){
-        mark_duplicates_in_ot(sld->fot, sld->fot_length, 0, sld->fmt);
+        mark_duplicates_in_ot(sld->fot, sld->fot_length, 0, sld->fmt, in_sam_filename);
     }
     if(sld->rot_length > 0){
-        mark_duplicates_in_ot(sld->rot, sld->rot_length, 1, sld->rmt);
+        mark_duplicates_in_ot(sld->rot, sld->rot_length, 1, sld->rmt, in_sam_filename);
     }
 }
 
@@ -1389,6 +1515,7 @@ void sort_ST(void * data){
     s->write_time = 0.0;
     s->num_reads = 0;
     sort_struct_t * sld = (sort_struct_t *) malloc(sizeof(sort_struct_t));
+    char * in_sam_filename = s->in_sam_filename;
 
     queue * q = s->q;
     struct_init(sld,s->length);
@@ -1404,7 +1531,7 @@ void sort_ST(void * data){
             break;
         }
         else{
-            process_sam_record_1(seq, sld);
+            process_sam_record_1(seq, sld, in_sam_filename);
         }
         if(seq){
             if(seq->mate != NULL){
@@ -1428,7 +1555,7 @@ void sort_ST(void * data){
     // Sorting the overflow table
 
     clock_gettime(CLOCK_THREAD_CPUTIME_ID,&proc_start);
-    mark_duplicates(sld);
+    mark_duplicates(sld, in_sam_filename);
     clock_gettime(CLOCK_THREAD_CPUTIME_ID,&proc_end);
     s->md_time = (double)(proc_end.tv_sec - proc_start.tv_sec) + ((double)(proc_end.tv_nsec - proc_start.tv_nsec)/(double)(1000000000));
     // Sorting end
@@ -2121,6 +2248,7 @@ void sort_MT(char * in_sam_filename,char * out_sam_filename,int num_threads, int
         slaves[i].num_reads = 0;
 
         slaves[i].q = qs[i];
+        slaves[i].in_sam_filename = in_sam_filename;
         pthread_create(&pts[i],NULL,sort_ST,&slaves[i]);
     } 
 

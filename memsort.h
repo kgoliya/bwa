@@ -70,6 +70,7 @@ typedef struct {
     double sort_time;
     double md_time;
     int64_t num_reads;
+    char * in_sam_filename;
 
     sort_struct_t * sld;
     queue * q;
