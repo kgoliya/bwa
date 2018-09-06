@@ -1484,14 +1484,9 @@ int sort_comparator(const void **p, const void **q)
                 return dec;
             }
             else{
-                // First in pair goes first
-                if(((l->ote->flags & 0x40) == 0) && ((r->ote->flags & 0x40) != 0)){
-                    // r is first in pair
-                    return 1;
-                }
-                if(((l->ote->flags & 0x40) != 0) && ((r->ote->flags & 0x40) == 0)){
-                    return -1;
-                }
+
+
+                // Check for secondary alignments first
                 if(((l->ote->flags & 0x100) == 0) && ((r->ote->flags & 0x100) != 0)){
                     // r is a secondary alignment
                     // l goes before r
@@ -1501,6 +1496,17 @@ int sort_comparator(const void **p, const void **q)
                     // l is a secondary alignment
                     // r goes before l
                     return 1;
+                }
+
+
+                // First in pair goes first
+                else if(((l->ote->flags & 0x40) == 0) && ((r->ote->flags & 0x40) != 0)){
+                    // r is first in pair
+                    return 1;
+                }
+                else if(((l->ote->flags & 0x40) != 0) && ((r->ote->flags & 0x40) == 0)){
+                    // l is first in pair, 
+                    return -1;
                 }
                 else if(((l->ote->flags & 0x4) == 0) && ((r->ote->flags & 0x4) != 0)){
                     // r is an unmapped alignment
