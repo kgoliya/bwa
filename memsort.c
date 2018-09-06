@@ -483,6 +483,8 @@ int is_duplicate_ens(half_mt_entry * en1, half_mt_entry * en2, int rev, int64_t 
         
         half_mt_entry * en1_m = (half_mt_entry *) en1->mate;
         half_mt_entry * en2_m = (half_mt_entry *) en2->mate;
+        uint16_t avg_qual_sum1 = 0;
+        uint16_t avg_qual_sum2 = 0;
         if(sort_verbose >= 10){
             fprintf(stderr,"------------------------------------------\n");
             fprintf(stderr,"%s\n",__func__);
@@ -496,8 +498,14 @@ int is_duplicate_ens(half_mt_entry * en1, half_mt_entry * en2, int rev, int64_t 
             // Check the mates position now
             if((en1_m->ref_pos == en2_m->ref_pos) && ((en1_m->flags & 0x10) == (en2_m->flags & 0x10))){
                 // mates position match and they have the same orientation
+                
 
-                if(en1->avg_qual < en2->avg_qual && en1_m->avg_qual < en2_m->avg_qual){
+                // Check sum of avg_qual for marking duplicates
+
+                avg_qual_sum1 = en1->avg_qual + en1_m->avg_qual;
+                avg_qual_sum2 = en2->avg_qual + en2_m->avg_qual;
+
+                if(avg_qual_sum1 < avg_qual_sum2){
                     // en1 is a duplicate
                     if(sort_verbose >= 10){
                         fprintf(stderr,"1 was marked duplicate along with mate due to low avg_qual\n");
@@ -506,7 +514,7 @@ int is_duplicate_ens(half_mt_entry * en1, half_mt_entry * en2, int rev, int64_t 
                     en1_m->flags |= 0x8000;
                     return 1;
                 }
-                else if(en2->avg_qual < en1->avg_qual && en2_m->avg_qual < en1_m->avg_qual){
+                else if(avg_qual_sum2 < avg_qual_sum1){
                     if(sort_verbose >= 10){
                         fprintf(stderr,"2 was marked duplicate along with mate due to low avg_qual\n");
                     }
@@ -659,6 +667,8 @@ int is_duplicate_seq_en(bseq1s_t * en1, half_mt_entry * en2, int rev, int64_t re
         
         bseq1s_t * en1_m = (bseq1s_t *) en1->mate;
         half_mt_entry * en2_m = (half_mt_entry *) en2->mate;
+        uint16_t avg_qual_sum1 = 0;
+        uint16_t avg_qual_sum2 = 0;
         if(sort_verbose >= 10){
             fprintf(stderr,"------------------------------------------\n");
             fprintf(stderr,"%s\n",__func__);
@@ -675,7 +685,9 @@ int is_duplicate_seq_en(bseq1s_t * en1, half_mt_entry * en2, int rev, int64_t re
             if((en1_m->abs_pos == en2_m->ref_pos) && ((en1_m->flags & 0x10) == (en2_m->flags & 0x10))){
                 // mates position match and they have the same orientation
 
-                if(en1->avg_qual < en2->avg_qual && en1_m->avg_qual < en2_m->avg_qual){
+                avg_qual_sum1 = en1->avg_qual + en1_m->avg_qual;
+                avg_qual_sum2 = en2->avg_qual + en2_m->avg_qual;
+                if(avg_qual_sum1 < avg_qual_sum2){
                     // en1 is a duplicate
                     if(sort_verbose >= 10){
                         fprintf(stderr,"1 was marked duplicate along with mate due to low avg_qual\n");
@@ -686,7 +698,7 @@ int is_duplicate_seq_en(bseq1s_t * en1, half_mt_entry * en2, int rev, int64_t re
                     en1_m->flags |= 0x8000;
                     return 1;
                 }
-                else if(en2->avg_qual < en1->avg_qual && en2_m->avg_qual < en1_m->avg_qual){
+                else if(avg_qual_sum2 < avg_qual_sum1){
                     // en2 is the duplicate
                     if(sort_verbose >= 10){
                         fprintf(stderr,"2 was marked duplicate along with mate due to low avg_qual\n");
@@ -1097,7 +1109,7 @@ bseq1s_t * get_sam_record(char * line, size_t line_size,uint64_t fileptr){
 
 
     if(sort_verbose >= 10){
-        fprintf(stderr,"[Inserted] Flags : %d, chr_num : %d, pos : %ld, correction : %d, avg_qual : %d, mate_chr_num : %d, mat_pos : %d\n",(seq->flags & 0xFFF),seq->chr_num,seq->abs_pos,seq->correction,seq->avg_qual,seq->mate_chr_num, seq->mate_pos); 
+        fprintf(stderr,"[Inserted] Flags : %d, chr_num : %d, pos : %ld, correction : %d, avg_qual : %d\n",(seq->flags & 0xFFF),seq->chr_num,seq->abs_pos,seq->correction,seq->avg_qual); 
     }
    
     return seq;
@@ -1206,7 +1218,12 @@ void mark_duplicates_in_ot(ot_entry ** ot, int64_t len, int rev, half_mt_entry *
     int64_t i,j = 0;
     int k = 0;
     ot_entry * e1 = 0;
+    half_mt_entry * e1_ote = 0;
+    half_mt_entry * e1_ote_m = 0;
+
     ot_entry * e2 = 0;
+    half_mt_entry * e2_ote = 0;
+    half_mt_entry * e2_ote_m = 0;
     int dup = 0;
 
     dup_list l;
@@ -1215,12 +1232,49 @@ void mark_duplicates_in_ot(ot_entry ** ot, int64_t len, int rev, half_mt_entry *
     int mode = 0;
     int64_t prev_ref = -1;
 
+    // TODO: Fix in main loop
+    if(len == 1){
+        // Only one entry in the overflow table
+        
+        e1 = ot[i];
+        e1_ote = &e1->ote;
+        e1_ote_m = (half_mt_entry *)e1->ote.mate;
+
+        if(mt[e1->ref_pos]){
+            e2_ote = mt[e1->ref_pos];
+            e2_ote_m = (half_mt_entry *)mt[e1->ref_pos]->mate;
+        }
+       
+        // 
+        if(((e1_ote->flags & 0x400) != 0) || ((e1_ote->flags & 0x100) != 0) || ((e1_ote->flags & 0x4) != 0)){
+            // Ignore entry if it already marked as a duplicate, is a secondary alignment and is an unmapped entry
+            return;
+        }
+        if(((e2_ote->flags & 0x400) != 0) || ((e2_ote->flags & 0x100) != 0) || ((e2_ote->flags & 0x4) != 0)){
+            // Ignore entry if it already marked as a duplicate, is a secondary alignment and is an unmapped entry
+            return;
+        }
+        dup = is_duplicate_ens(e1_ote, e2_ote, rev, e1->ref_pos);
+
+        if(dup == 1){
+            e1_ote->flags |= 0x400;
+            e1_ote->flags |= 0x8000;
+        }
+        else if(dup == -1){
+            e2_ote->flags |= 0x400;
+            e2_ote->flags |= 0x8000;
+        }
+
+
+    }
+
+
 
 
     for(i=0;i<len-1;i++){
         e1 = ot[i];
-        half_mt_entry * e1_ote = &e1->ote;
-        half_mt_entry * e1_ote_m = (half_mt_entry *)e1->ote.mate;
+        e1_ote = &e1->ote;
+        e1_ote_m = (half_mt_entry *)e1->ote.mate;
 
         if(prev_ref != e1->ref_pos){
             // TODO: Slow, try to change once functionality is correct
@@ -1249,8 +1303,8 @@ void mark_duplicates_in_ot(ot_entry ** ot, int64_t len, int rev, half_mt_entry *
         }
         for(j=i+1;j<len;j++){
             e2 = ot[j];
-            half_mt_entry * e2_ote = &e2->ote;
-            half_mt_entry * e2_ote_m = (half_mt_entry *)e2->ote.mate;
+            e2_ote = &e2->ote;
+            e2_ote_m = (half_mt_entry *)e2->ote.mate;
             if((e1->ref_pos != e2->ref_pos)){
                 // Crossed over into another ref_pos territory without seeing entries in between that were not duplicates
                 break;
@@ -1910,7 +1964,7 @@ void generate_sorted_sam(FILE * in_sam, FILE * out_sam, sort_slave_t * sl, int64
             }
         }
 
-        if(sort_verbose >= 5 && ((*rid / 1000000) != *rid_div)){
+        if(sort_verbose >= 3 && ((*rid / 1000000) != *rid_div)){
             clock_gettime(CLOCK_REALTIME,&write_end);
             write_time = (double)(write_end.tv_sec - write_start->tv_sec) + ((double)(write_end.tv_nsec - write_start->tv_nsec)/(double)(1000000000));
             *rid_div = (*rid / 1000000);
@@ -2077,6 +2131,8 @@ void sort_MT(char * in_sam_filename,char * out_sam_filename,int num_threads, int
         clock_gettime(CLOCK_REALTIME,&read_start);
     }
     int current_div = 0;
+    uint16_t seq_avg_qual = 0;
+    uint16_t mate_avg_qual = 0;
     while(!feof(in_sam)){
         fileptr = (uint64_t)ftell(in_sam);
         ret = getline(&line,&line_size,in_sam);
@@ -2084,6 +2140,7 @@ void sort_MT(char * in_sam_filename,char * out_sam_filename,int num_threads, int
             s = get_sam_record(line, strlen(line), fileptr);
             read_id++;
             if(s->chr_num != -1 && s->abs_pos != -1){
+                // Assuming the mate will also be unmapped without any position
             //if(s != NULL){
 
                 // Entry has valid sam record
@@ -2107,6 +2164,19 @@ void sort_MT(char * in_sam_filename,char * out_sam_filename,int num_threads, int
                             s->mate_pos = m->abs_pos;
                             m->mate_chr_num = s->chr_num;
                             m->mate_pos = s->abs_pos;
+
+                            mate_avg_qual = m->avg_qual;
+                            seq_avg_qual = s->avg_qual;
+
+                            // Do not add avg_qual scores if the mate is unmapped
+                            if(m->chr_num != -1 && m->abs_pos != -1){
+                                if(((s->flags & 0x4) == 0) && ((m->flags & 0x4) == 0)){
+                                    // only add avg_qual if the mate and the s are both mapped
+                                    s->avg_qual += mate_avg_qual;                             
+                                    m->avg_qual += seq_avg_qual;
+                                }
+                            }
+
                             if(m->chr_num != -1 && m->abs_pos != -1){
                                 if(m->chr_num != s->chr_num){
                                     m->abs_pos += chr_len[m->chr_num - 1];
@@ -2239,7 +2309,6 @@ void sort_MT(char * in_sam_filename,char * out_sam_filename,int num_threads, int
     }
 
     fprintf(stderr,"Total duplicates detected : %d\n",total_duplicates);
-
 
     // Print output sam file
 
