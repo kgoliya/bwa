@@ -593,24 +593,105 @@ int is_duplicate_ens(half_mt_entry * en1, half_mt_entry * en2, int rev, int64_t 
                 }
                 else{
                     // Check the fileptrs, the larger one is marked as the duplicate
-                        lex = compare_sam_names_ens(en1,en2,in_sam_filename);
 
-                        if(lex == -1){
+                    // Check sorted position now
+                    if((en1->flags & 0x10) == 0){
+                        // en1 is mapped to forward strand
+                        tmp1 = ref_pos + en1->correction;
+                    }
+                    else{
+                        // en1 is mapped to reverse strand
+                        tmp1 = ref_pos - en1->correction;
+                    }
+
+                    if((en2->flags & 0x10) == 0){
+                        // en1 is mapped to forward strand
+                        tmp2 = ref_pos + en2->correction;
+                    }
+                    else{
+                        // en1 is mapped to reverse strand
+                        tmp2 = ref_pos - en2->correction;
+                    }
+
+                    if(tmp1 < tmp2){
+                        // en1 will appear before en2 in sorted order, mark en2 and mate as duplicate
+                        if(sort_verbose >= 10){
+                            fprintf(stderr,"2 was marked duplicate with mate due to higher sorted order position\n");
+                        }
+                        en2_m->flags |= 0x400;
+                        en2_m->flags |= 0x8000;
+                        return -1;
+                    }
+                    else if(tmp2 < tmp1){
+                        if(sort_verbose >= 10){
+                            fprintf(stderr,"1 was marked duplicate with mate due to higher sorted order\n");
+                        }
+                        en1_m->flags |= 0x400;
+                        en1_m->flags |= 0x8000;
+                        return 1;
+                    }
+                    else{
+                        
+
+                        // en1 and en2 have the same sorted order position, compare mates sorted orders
+
+                        if((en1_m->flags & 0x10) == 0){
+                            // en1 is mapped to forward strand
+                            tmp1 = en1->mate_pos + en1_m->correction;
+                        }
+                        else{
+                            // en1 is mapped to reverse strand
+                            tmp1 = en1->mate_pos - en1_m->correction;
+                        }
+
+                        if((en2_m->flags & 0x10) == 0){
+                            // en1 is mapped to forward strand
+                            tmp2 = en2->mate_pos + en2_m->correction;
+                        }
+                        else{
+                            // en1 is mapped to reverse strand
+                            tmp2 = en2->mate_pos - en2_m->correction;
+                        }
+                        
+                        if(tmp1 < tmp2){
+                            // en1s mate goes before en2s mate, mark en2 as duplicate
                             if(sort_verbose >= 10){
-                                fprintf(stderr,"2 was marked duplicate with mate due to lexicographic order\n");
+                                fprintf(stderr,"2 was marked duplicate with mate due to higher sorted order position\n");
                             }
                             en2_m->flags |= 0x400;
                             en2_m->flags |= 0x8000;
                             return -1;
                         }
-                        else {
+                        else if(tmp2 < tmp1){
                             if(sort_verbose >= 10){
-                                fprintf(stderr,"1 was marked duplicate with mate due to lexicographic order\n");
+                                fprintf(stderr,"1 was marked duplicate with mate due to higher sorted order position\n");
                             }
                             en1_m->flags |= 0x400;
                             en1_m->flags |= 0x8000;
                             return 1;
                         }
+                        else{
+                            lex = compare_sam_names_ens(en1,en2,in_sam_filename);
+
+
+                            if(lex == -1){
+                                if(sort_verbose >= 10){
+                                    fprintf(stderr,"2 was marked duplicate with mate due to lexicographic order\n");
+                                }
+                                en2_m->flags |= 0x400;
+                                en2_m->flags |= 0x8000;
+                                return -1;
+                            }
+                            else {
+                                if(sort_verbose >= 10){
+                                    fprintf(stderr,"1 was marked duplicate with mate due to lexicographic order\n");
+                                }
+                                en1_m->flags |= 0x400;
+                                en1_m->flags |= 0x8000;
+                                return 1;
+                            }
+                        }
+                    }
                 }
             }
             else{
@@ -635,7 +716,10 @@ int is_duplicate_ens(half_mt_entry * en1, half_mt_entry * en2, int rev, int64_t 
 
             //check if mate is mapped and compare mate positions only if mate is mapped
             
-            if((((en1->flags & 0x8) == 0) && ((en2->flags & 0x8) == 0) && ((en1->flags & 0x20) == (en2->flags & 0x20)) && (en1->mate_chr_num == en2->mate_chr_num) && (en1->mate_pos == en2->mate_pos)) || ((en1->flags & 0x8) != 0) || ((en2->flags & 0x8) != 0)){
+            if((((en1->flags & 0x8) == 0) && ((en2->flags & 0x8) == 0) && ((en1->flags & 0x20) == (en2->flags & 0x20)) && (en1->mate_chr_num == en2->mate_chr_num) && (en1->mate_pos == en2->mate_pos)) || (((en1->flags & 0x8) != 0) && ((en2->flags & 0x8) != 0))){
+
+
+                // if both entries have mates mapped or both entries have mates unmapped
                 if(en1->avg_qual < en2->avg_qual){
                     // l_en1 is the duplicate
                     if(sort_verbose >= 10){
@@ -695,6 +779,19 @@ int is_duplicate_ens(half_mt_entry * en1, half_mt_entry * en2, int rev, int64_t 
                     // l_en2 is duplicate
                     return -1;
                 }
+            }
+            else if(((en1->flags & 0x8) != 0)){ 
+                if(sort_verbose >= 10){
+                    fprintf(stderr,"1 was marked duplicate due to unmapped mate\n");
+                }
+                return 1;
+
+            }
+            else if((en2->flags & 0x8) != 0){
+                if(sort_verbose >= 10){
+                    fprintf(stderr,"2 was marked duplicate due to unmapped mate\n");
+                }
+                return -1;
             }
             else{
                 return 0;
@@ -839,12 +936,37 @@ int is_duplicate_seq_en(bseq1s_t * en1, half_mt_entry * en2, int rev, int64_t re
                     return -1;
                 }
                 else{
-                    // Check the fileptrs, the larger one is marked as the duplicate
-                    lex = compare_sam_names_en_seq(en1,en2,in_sam_filename);
 
-                    if(lex == -1){
+
+
+
+
+
+                    // Check the fileptrs, the larger one is marked as the duplicate
+
+                    // Check sorted position now
+                    if((en1->flags & 0x10) == 0){
+                        // en1 is mapped to forward strand
+                        tmp1 = ref_pos + en1->correction;
+                    }
+                    else{
+                        // en1 is mapped to reverse strand
+                        tmp1 = ref_pos - en1->correction;
+                    }
+
+                    if((en2->flags & 0x10) == 0){
+                        // en1 is mapped to forward strand
+                        tmp2 = ref_pos + en2->correction;
+                    }
+                    else{
+                        // en1 is mapped to reverse strand
+                        tmp2 = ref_pos - en2->correction;
+                    }
+
+                    if(tmp1 < tmp2){
+                        // en1 will appear before en2 in sorted order, mark en2 and mate as duplicate
                         if(sort_verbose >= 10){
-                            fprintf(stderr,"2 was marked duplicate due to lexicographic order\n");
+                            fprintf(stderr,"2 was marked duplicate with mate due to higher sorted order position\n");
                         }
                         en2->flags |= 0x400;
                         en2->flags |= 0x8000;
@@ -852,9 +974,9 @@ int is_duplicate_seq_en(bseq1s_t * en1, half_mt_entry * en2, int rev, int64_t re
                         en2_m->flags |= 0x8000;
                         return -1;
                     }
-                    else {
+                    else if(tmp2 < tmp1){
                         if(sort_verbose >= 10){
-                            fprintf(stderr,"1 was marked duplicate due to lexicographic order\n");
+                            fprintf(stderr,"1 was marked duplicate with mate due to higher sorted order\n");
                         }
                         en1->flags |= 0x400;
                         en1->flags |= 0x8000;
@@ -862,6 +984,88 @@ int is_duplicate_seq_en(bseq1s_t * en1, half_mt_entry * en2, int rev, int64_t re
                         en1_m->flags |= 0x8000;
                         return 1;
                     }
+                    else{
+                        
+
+                        // en1 and en2 have the same sorted order position, compare mates sorted orders
+
+                        if((en1_m->flags & 0x10) == 0){
+                            // en1 is mapped to forward strand
+                            tmp1 = en1->mate_pos + en1_m->correction;
+                        }
+                        else{
+                            // en1 is mapped to reverse strand
+                            tmp1 = en1->mate_pos - en1_m->correction;
+                        }
+
+                        if((en2_m->flags & 0x10) == 0){
+                            // en1 is mapped to forward strand
+                            tmp2 = en2->mate_pos + en2_m->correction;
+                        }
+                        else{
+                            // en1 is mapped to reverse strand
+                            tmp2 = en2->mate_pos - en2_m->correction;
+                        }
+                        
+                        if(tmp1 < tmp2){
+                            // en1s mate goes before en2s mate, mark en2 as duplicate
+                            if(sort_verbose >= 10){
+                                fprintf(stderr,"2 was marked duplicate with mate due to higher sorted order position\n");
+                            }
+                            en2->flags |= 0x400;
+                            en2->flags |= 0x8000;
+                            en2_m->flags |= 0x400;
+                            en2_m->flags |= 0x8000;
+                            return -1;
+                        }
+                        else if(tmp2 < tmp1){
+                            if(sort_verbose >= 10){
+                                fprintf(stderr,"1 was marked duplicate with mate due to higher sorted order position\n");
+                            }
+                            en1->flags |= 0x400;
+                            en1->flags |= 0x8000;
+                            en1_m->flags |= 0x400;
+                            en1_m->flags |= 0x8000;
+                            return 1;
+                        }
+                        else{
+                            lex = compare_sam_names_en_seq(en1,en2,in_sam_filename);
+
+
+                            if(lex == -1){
+                                if(sort_verbose >= 10){
+                                    fprintf(stderr,"2 was marked duplicate with mate due to lexicographic order\n");
+                                }
+                                en2->flags |= 0x400;
+                                en2->flags |= 0x8000;
+                                en2_m->flags |= 0x400;
+                                en2_m->flags |= 0x8000;
+                                return -1;
+                            }
+                            else {
+                                if(sort_verbose >= 10){
+                                    fprintf(stderr,"1 was marked duplicate with mate due to lexicographic order\n");
+                                }
+                                en1->flags |= 0x400;
+                                en1->flags |= 0x8000;
+                                en1_m->flags |= 0x400;
+                                en1_m->flags |= 0x8000;
+                                return 1;
+                            }
+                        }
+                    }
+
+
+
+
+
+
+
+
+
+
+
+
                 }
             }
             else{
@@ -886,7 +1090,7 @@ int is_duplicate_seq_en(bseq1s_t * en1, half_mt_entry * en2, int rev, int64_t re
 
             //check if mate is mapped and compare mate positions only if mate is unmapped
             
-            if((((en1->flags & 0x8) == 0) && ((en2->flags & 0x8) == 0) && ((en1->flags & 0x20) == (en2->flags & 0x20)) && (en1->mate_chr_num == en2->mate_chr_num) && (en1->mate_pos == en2->mate_pos)) || ((en1->flags & 0x8) != 0) || ((en2->flags & 0x8) != 0)){
+            if((((en1->flags & 0x8) == 0) && ((en2->flags & 0x8) == 0) && ((en1->flags & 0x20) == (en2->flags & 0x20)) && (en1->mate_chr_num == en2->mate_chr_num) && (en1->mate_pos == en2->mate_pos)) || (((en1->flags & 0x8) != 0) && ((en2->flags & 0x8) != 0))){
 
 
                 // if both entries have mapped mates, then check the orientations of the mate
