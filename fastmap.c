@@ -13,6 +13,7 @@
 #include "bntseq.h"
 #include "kseq.h"
 #include "memsort.h"
+#include "dma_common.h"
 
 #include <fpga_pci.h>
 #include <fpga_mgmt.h>
@@ -38,6 +39,7 @@ void kt_pipeline(int n_threads, void *(*func)(void*, int, void*), void *shared_d
 
 pci_bar_handle_t fm_pci_bar_handle;
 
+fpga_pci_data_t fpga_pci_conn;
 
 
 typedef struct {
@@ -162,12 +164,7 @@ int write_ann_data_to_fpga(const bntseq_t *bns, int channel){
         printf("Ann write buffer size : %zd\n",ann_write_buffer_size);
     }
 
-    
-    /*for(i = 0;i<n_seqs*4;i++){
-        fpga_pci_poke64(fm_pci_bar_handle,channel*MEM_16G + i*8,ann_write_buffer[i]); 
-    }*/
-    rc = fastmap_write_to_fpga(fm_pci_bar_handle,0,(uint32_t *)ann_write_buffer,channel,(ann_write_buffer_size / sizeof(uint32_t)));
-    //int fastmap_write_to_fpga(pci_bar_handle_t pci_bar_handle, uint64_t offset, uint32_t *buffer, int channel, size_t buffer_size){
+    rc = write_to_fpga(fpga_pci_conn.write_fd,ann_write_buffer,ann_write_buffer_size,0);
 
     if(ann_write_buffer)
         free(ann_write_buffer);
@@ -177,12 +174,11 @@ int write_ann_data_to_fpga(const bntseq_t *bns, int channel){
 
 
 int write_pac_to_fpga(const uint8_t *pac, int64_t l_pac,int channel, uint64_t offset){
-    //int64_t l_pac_2 = (l_pac)>>2;
-    size_t l_pac_bytes = (l_pac)>>2;
-    //printf("For pac writing : %lu\n",l_pac_2);
-    //write_buffer_capacity = 256 * 16 * sizeof(uint32_t);
 
-    int rc = fastmap_write_to_fpga(fm_pci_bar_handle, offset,(uint32_t*)(pac),channel,(l_pac_bytes / sizeof(uint32_t)));
+    size_t l_pac_bytes = (l_pac)>>2;
+
+    int rc = write_to_fpga(fpga_pci_conn.write_fd,pac,l_pac_bytes,offset);
+
     return 0; 
 }
 
@@ -223,18 +219,18 @@ static void *process(void *shared, int step, void *_data)
 				fprintf(stderr, "[M::%s] %d single-end sequences; %d paired-end sequences\n", __func__, n_sep[0], n_sep[1]);
 			if (n_sep[0]) {
 				tmp_opt.flag &= ~MEM_F_PE;
-				mem_process_seqs(&tmp_opt, idx->bwt, idx->bns, idx->pac, aux->n_processed, n_sep[0], sep[0], 0, fm_pci_bar_handle);
+				mem_process_seqs(&tmp_opt, idx->bwt, idx->bns, idx->pac, aux->n_processed, n_sep[0], sep[0], 0, &fpga_pci_conn);
 				for (i = 0; i < n_sep[0]; ++i)
 					data->seqs[sep[0][i].id].sam = sep[0][i].sam;
 			}
 			if (n_sep[1]) {
 				tmp_opt.flag |= MEM_F_PE;
-				mem_process_seqs(&tmp_opt, idx->bwt, idx->bns, idx->pac, aux->n_processed + n_sep[0], n_sep[1], sep[1], aux->pes0, fm_pci_bar_handle);
+				mem_process_seqs(&tmp_opt, idx->bwt, idx->bns, idx->pac, aux->n_processed + n_sep[0], n_sep[1], sep[1], aux->pes0, &fpga_pci_conn);
 				for (i = 0; i < n_sep[1]; ++i)
 					data->seqs[sep[1][i].id].sam = sep[1][i].sam;
 			}
 			free(sep[0]); free(sep[1]);
-		} else mem_process_seqs(opt, idx->bwt, idx->bns, idx->pac, aux->n_processed, data->n_seqs, data->seqs, aux->pes0, fm_pci_bar_handle);
+		} else mem_process_seqs(opt, idx->bwt, idx->bns, idx->pac, aux->n_processed, data->n_seqs, data->seqs, aux->pes0, &fpga_pci_conn);
 		aux->n_processed += data->n_seqs;
 		return data;
 	} else if (step == 2) {
@@ -516,17 +512,27 @@ int main_mem(int argc, char *argv[])
     int rc = 0;
     
     // Initialize bar handle for data transfer to FPGA
-    rc = fpga_pci_attach(0, 0, 4, BURST_CAPABLE, &fm_pci_bar_handle);
+    
+    //rc = fpga_pci_attach(0, 0, 4, BURST_CAPABLE, &fm_pci_bar_handle);
+
+    fpga_pci_conn.write_fd = initialize_write_queue(0,0);
+
+    fpga_pci_conn.read_fd = initialize_read_queue(0,0);
+
+    fpga_pci_conn.pci_bar_handle = initialize_ocl_bus(0);
+
 
 
 
     int channel = 2;
     uint64_t fpga_mem_write_offset1 = 0;
 
-    
+   
 
     // Write Annotated data to FPGA
     fpga_mem_write_offset1 = write_ann_data_to_fpga(aux.idx->bns,channel);
+
+    // Write the pac to FPGA
     write_pac_to_fpga(aux.idx->pac,aux.idx->bns->l_pac,channel, fpga_mem_write_offset1);
 
     int64_t l_pac_2 = aux.idx->bns->l_pac;
@@ -546,7 +552,10 @@ int main_mem(int argc, char *argv[])
 		err_gzclose(fp2); kclose(ko2);
 	}
 
-    fpga_pci_detach(fm_pci_bar_handle);
+        close_read_queue(fpga_pci_conn.read_fd);
+        close_write_queue(fpga_pci_conn.write_fd);
+        close_ocl_bus(fpga_pci_conn.pci_bar_handle);
+
 
 	return 0;
 }

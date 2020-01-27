@@ -209,41 +209,17 @@ int fpga_verbose = 0;
 
     uint64_t fpga_mem_write_offset = 0;
 
-    uint16_t vled;
-    uint16_t vdip;
+    uint32_t vled;
+    uint32_t vdip;
     
     pci_bar_handle_t bw_pci_bar_handle;
 
+    fpga_pci_conn * fpga_pci_local;
 
 
     struct timeval s2_waitq1_st, s2_waitq1_et;
     int total_s1_waitq1_time = 0;
 
-
-//int write_to_fpga(uint32_t *buffer){
-int write_to_fpga(pci_bar_handle_t pci_bar_handle, uint8_t *buffer, int channel, size_t buffer_size){
-
-    int rc = 0;
-    int j = 0;
-    int k = 0;
-    int i = 0;
-    if(fpga_verbose >= 20 && channel == 0){
-        printf("Writing to channel %d at offset : %ld\n",channel,fpga_mem_write_offset);    
-        printf("@@@@@@@@@@@\n");
-        for(j = 0;j<(buffer_size/64);j++){
-            for(k = 63;k>=0;k--) {
-                for(i = 8-4;i>=0;i -= 4){
-                    printf("%x",buffer[j*64 + k]>>i & 0xF);
-                }
-            }
-            printf("\n");
-        }
-    }
-
-    rc = fpga_pci_write_burst(pci_bar_handle, channel * MEM_16G, (uint32_t *)buffer, (buffer_size / sizeof(uint32_t)));
-
-    return rc;
-}
 
 
 
@@ -1839,8 +1815,16 @@ mem_alnreg_v mem_align1_core(const mem_opt_t *opt, const bwt_t *bwt, const bntse
 
         // FPGA Read encoding
         if(*write_buffer_index % write_buffer_read_entry_length != 0) {
+            
+            // If the write buffer index is not aligned with read entry length, align it
+
             *write_buffer_index += write_buffer_read_entry_length - (*write_buffer_index % write_buffer_read_entry_length);
+
+
             if(*write_buffer_index != 0 && *write_buffer_index % max_write_buffer_index == 0){
+
+                // If the buffer index was not 0 and the index is beyond the size of the buffer, reallocate
+
                 int mul = (*write_buffer_index / max_write_buffer_index) + 1;
                 *write_buffer = (uint8_t*)realloc(*write_buffer,mul*write_buffer_capacity);
                 memset(*write_buffer + *write_buffer_index,0,write_buffer_capacity);
@@ -2141,7 +2125,7 @@ void get_all_scores(uint8_t *read_buffer,queue_t *w,fpga_data_out_v * flv){
 }
 
 
-void read_from_fpga(pci_bar_handle_t pci_bar_handle,queue_t* w, fpga_data_out_v * flv, int channel){
+void read_scores_from_fpga(pci_bar_handle_t pci_bar_handle,queue_t* w, fpga_data_out_v * flv, int channel){
     int rc = 0;
      
     if(flv->n != 0){   
@@ -2149,14 +2133,9 @@ void read_from_fpga(pci_bar_handle_t pci_bar_handle,queue_t* w, fpga_data_out_v 
             printf("Num entries in read_from_fpga : %zd\n",flv->n);
         }
 
-        uint32_t read_offset = 0;
         size_t read_buffer_size = flv->n * 64;
-        uint8_t *read_buffer = (uint8_t *)malloc(read_buffer_size);
 
-        int i = 0;
-        for(i=0;i<(read_buffer_size);i++){
-            rc = fpga_pci_peek8(pci_bar_handle,channel * MEM_16G + i, &read_buffer[i]);
-        }
+        uint8_t * read_buffer = read_from_fpga(fpga_pci_local->read_fd,read_buffer_size,channel * MEM_16G);
 
         get_all_scores(read_buffer,w,flv);
 
@@ -2456,16 +2435,23 @@ static void fpga_worker(void *data){
             if(f1v.n != 0){
                 load_buffer = (uint8_t *)realloc(load_buffer,load_buffer_size + write_buffer_capacity);
                 memset(load_buffer + load_buffer_size,0,write_buffer_capacity);
-                write_to_fpga(bw_pci_bar_handle,load_buffer,0,load_buffer_size + write_buffer_capacity);
+
+                write_to_fpga(fpga_pci_local->write_fd,load_buffer,load_buffer_size + write_buffer_capacity,0);
 
                 vdip = 0x0001;
-                rc = fpga_mgmt_set_vDIP(0,vdip);
+               
+                // PCI Poke can be used for writing small amounts of data on the OCL bus
+                rc = fpga_pci_poke(fpga_pci_local->pci_bar_handle,0,vdip);
+
                 clock_gettime(CLOCK_THREAD_CPUTIME_ID, &start);         
                 while(1) {
-                    rc = fpga_mgmt_get_vLED_status(0,&vled);
+
+                    rc = fpga_pci_peek(fpga_pci_local->pci_bar_handle,0,&vled);
+
                     if((vled & 0x0001) == 0)  {
                         break;
                     }
+
                     clock_gettime(CLOCK_THREAD_CPUTIME_ID, &end);         
                     timediff = (end.tv_nsec - start.tv_nsec) * 1000000000 + (end.tv_sec - start.tv_sec);
                     if(timediff > TIMEOUT){
@@ -2474,18 +2460,18 @@ static void fpga_worker(void *data){
                             fprintf(stderr,"Starting : %ld, Size : %zd\n",qe->starting_read_id, load_buffer_size);
                         }
                         vdip = 0x0002;
-                        rc = fpga_mgmt_set_vDIP(0,vdip);
+                        rc = fpga_pci_poke(fpga_pci_local->pci_bar_handle,0,vdip);
                         vdip = 0x0000;
-                        rc = fpga_mgmt_set_vDIP(0,vdip);
+                        rc = fpga_pci_poke(fpga_pci_local->pci_bar_handle,0,vdip);
                         time_out = 1;
                         break;
                     }
                 }
             
                 if(time_out == 0){
-                    read_from_fpga(bw_pci_bar_handle,qe,&f1v,3);
+                    read_scores_from_fpga(bw_pci_bar_handle,qe,&f1v,3);
                     vdip = 0x0000;
-                    rc = fpga_mgmt_set_vDIP(0,vdip);
+                    rc = fpga_pci_poke(fpga_pci_local->pci_bar_handle,0,vdip);
                 }
             }
 
@@ -2632,7 +2618,7 @@ out:
 }*/
 
 
-void mem_process_seqs(const mem_opt_t *opt, const bwt_t *bwt, bntseq_t *bns, const uint8_t *pac, int64_t n_processed, int n, bseq1_t *seqs, const mem_pestat_t *pes0, pci_bar_handle_t pci_bar_handle)
+void mem_process_seqs(const mem_opt_t *opt, const bwt_t *bwt, bntseq_t *bns, const uint8_t *pac, int64_t n_processed, int n, bseq1_t *seqs, const mem_pestat_t *pes0, fpga_pci_conn * fpga_pci)
 {
 	extern void kt_for(int n_threads, void (*func)(void*,int,int), void *data, int n);
 	extern void kt_for_batch(int n_threads, void (*func)(void*,int,int,int), void *data, int n, int batch_size); // [QA] new kt_for for batch processing
@@ -2659,7 +2645,8 @@ void mem_process_seqs(const mem_opt_t *opt, const bwt_t *bwt, bntseq_t *bns, con
     }
 
         fpga_mem_write_offset = 0;
-        bw_pci_bar_handle = pci_bar_handle;
+
+        fpga_pci_local = fpga_pci;
 
 
 
